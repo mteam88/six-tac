@@ -2,6 +2,8 @@
 
 Minimal infinite hex tic tac toe.
 
+Credit to [@webgoatguy](https://www.youtube.com/@webgoatguy) on Youtube: [https://www.youtube.com/watch?v=Ob6QINTMIOA](https://www.youtube.com/watch?v=Ob6QINTMIOA)
+
 ## Stack
 
 - Frontend: plain TypeScript + canvas
