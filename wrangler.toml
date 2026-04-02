@@ -1,0 +1,21 @@
+name = "six-tac"
+main = "src/worker.ts"
+compatibility_date = "2026-04-02"
+workers_dev = true
+
+[[routes]]
+pattern = "6-tac.com"
+custom_domain = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomObject"]

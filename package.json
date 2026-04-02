@@ -2,7 +2,15 @@
   "name": "six-tac",
   "private": true,
   "scripts": {
-    "build": "tsc",
-    "start": "tsc && node server.js"
+    "build": "rm -rf public src/engine-wasm && npm run build:client && npm run build:engine",
+    "build:client": "tsc && cp index.html styles.css public/",
+    "build:engine": "cargo build --manifest-path engine/Cargo.toml --target wasm32-unknown-unknown --release && wasm-bindgen engine/target/wasm32-unknown-unknown/release/hex_tic_tac_engine.wasm --out-dir src/engine-wasm --out-name engine --target bundler",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "start": "npm run dev"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "wrangler": "^4.80.0"
   }
 }

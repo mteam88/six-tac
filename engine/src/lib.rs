@@ -37,6 +37,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
+use wasm_bindgen::prelude::*;
 
 const WIN_LENGTH: u8 = 6;
 const MAX_PLACEMENT_DISTANCE: u32 = 8;
@@ -682,6 +683,82 @@ const fn abs_i32(value: i32) -> i32 {
     } else {
         value
     }
+}
+
+#[derive(Serialize)]
+struct StoneView {
+    x: i32,
+    y: i32,
+    z: i32,
+    player: Player,
+}
+
+#[derive(Serialize)]
+struct SnapshotView {
+    current_player: Player,
+    winner: Option<Player>,
+    turn_count: u32,
+    stone_count: u32,
+    turns_json: String,
+    stones: Vec<StoneView>,
+}
+
+fn game_from_json(game_json: &str) -> Result<Game, Box<dyn Error>> {
+    if game_json.trim().is_empty() {
+        Ok(Game::new())
+    } else {
+        Ok(Game::from_json_str(game_json)?)
+    }
+}
+
+fn snapshot_from_game(game: &Game) -> Result<SnapshotView, Box<dyn Error>> {
+    let mut stones = game
+        .stones()
+        .map(|(cube, player)| StoneView {
+            x: cube.x(),
+            y: cube.y(),
+            z: cube.z(),
+            player,
+        })
+        .collect::<Vec<_>>();
+
+    stones.sort_by_key(|stone| (stone.x, stone.y, stone.z));
+
+    Ok(SnapshotView {
+        current_player: game.current_player(),
+        winner: game.winner(),
+        turn_count: game.turn_count(),
+        stone_count: game.stone_count(),
+        turns_json: game.to_json()?,
+        stones,
+    })
+}
+
+fn snapshot_json_impl(game_json: &str) -> Result<String, Box<dyn Error>> {
+    let game = game_from_json(game_json)?;
+    Ok(serde_json::to_string(&snapshot_from_game(&game)?)?)
+}
+
+fn play_json_impl(game_json: &str, stones_json: &str) -> Result<String, Box<dyn Error>> {
+    let stones = serde_json::from_str::<[Cube; 2]>(stones_json)?;
+    let mut game = game_from_json(game_json)?;
+    match game.play(stones)? {
+        TurnOutcome::TurnPassed { .. } | TurnOutcome::Win { .. } => {
+            Ok(serde_json::to_string(&snapshot_from_game(&game)?)?)
+        }
+    }
+}
+
+/// Returns a JSON snapshot of a game from turn-list JSON.
+#[wasm_bindgen]
+pub fn snapshot_json(game_json: &str) -> Result<String, JsValue> {
+    snapshot_json_impl(game_json).map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+/// Applies a two-stone turn encoded as JSON and returns the next snapshot as JSON.
+#[wasm_bindgen]
+pub fn play_json(game_json: &str, stones_json: &str) -> Result<String, JsValue> {
+    play_json_impl(game_json, stones_json).map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 #[cfg(test)]

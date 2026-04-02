@@ -1,7 +1,8 @@
 (() => {
 
-type Seat = "one" | "two" | "spectator";
+type Seat = "one" | "two" | "spectator" | "local";
 type Player = "One" | "Two";
+type RoomMode = "online" | "local";
 
 type Cube = {
   x: number;
@@ -14,7 +15,8 @@ type Stone = Cube & {
 };
 
 type RoomState = {
-  code: string;
+  mode: RoomMode;
+  code: string | null;
   seat: Seat;
   currentPlayer: Player;
   winner: Player | null;
@@ -23,6 +25,7 @@ type RoomState = {
   stones: Stone[];
   lastTurnPlayer: Player | null;
   lastTurnStones: Cube[];
+  gameJson: string;
 };
 
 type Session = {
@@ -34,6 +37,7 @@ const canvas = document.getElementById("board") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 const lobbyEl = document.getElementById("lobby") as HTMLDivElement;
 const lobbyErrorEl = document.getElementById("lobby-error") as HTMLDivElement;
+const localModeButton = document.getElementById("local-mode-button") as HTMLButtonElement;
 const createRoomButton = document.getElementById("create-room-button") as HTMLButtonElement;
 const joinRoomButton = document.getElementById("join-room-button") as HTMLButtonElement;
 const joinCodeInput = document.getElementById("join-code-input") as HTMLInputElement;
@@ -396,6 +400,16 @@ async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
+async function startLocalGame(): Promise<void> {
+  setLobbyError("");
+  saveSession(null);
+  const room = await requestJson<RoomState>("/api/local/start", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  applyRoom(room);
+}
+
 async function createRoom(): Promise<void> {
   setLobbyError("");
   const result = await requestJson<{ code: string; token: string; room: RoomState }>("/api/rooms/create", {
@@ -425,7 +439,7 @@ async function loadRoomState(): Promise<void> {
 }
 
 async function submitTurn(): Promise<void> {
-  if (!state.session || !state.room || state.selected.length !== 2 || state.pendingSubmit) {
+  if (!state.room || state.selected.length !== 2 || state.pendingSubmit) {
     return;
   }
 
@@ -433,13 +447,21 @@ async function submitTurn(): Promise<void> {
   updateControls();
 
   try {
-    const room = await requestJson<RoomState>(`/api/rooms/${state.session.code}/move`, {
-      method: "POST",
-      body: JSON.stringify({
-        token: state.session.token,
-        stones: state.selected,
-      }),
-    });
+    const room = state.room.mode === "local"
+      ? await requestJson<RoomState>("/api/local/move", {
+          method: "POST",
+          body: JSON.stringify({
+            gameJson: state.room.gameJson,
+            stones: state.selected,
+          }),
+        })
+      : await requestJson<RoomState>(`/api/rooms/${state.session?.code}/move`, {
+          method: "POST",
+          body: JSON.stringify({
+            token: state.session?.token,
+            stones: state.selected,
+          }),
+        });
     state.selected = [];
     applyRoom(room);
   } catch (error) {
@@ -457,6 +479,11 @@ function formatRoomCode(code: string): string {
 
 function seatPlayer(seat: Seat): Player | null {
   return seat === "one" ? "One" : seat === "two" ? "Two" : null;
+}
+
+function currentControllingPlayer(room: RoomState): Player | null {
+  if (room.mode === "local") return room.currentPlayer;
+  return seatPlayer(room.seat);
 }
 
 function centerOnCubes(cubes: Cube[]): void {
@@ -491,10 +518,10 @@ function cubesAreVisible(cubes: Cube[]): boolean {
 function applyRoom(room: RoomState): void {
   const previousRoom = state.room;
   const previousTurns = previousRoom?.turns ?? 0;
-  const yourPlayer = seatPlayer(room.seat);
-  const shouldHighlightRecent = Boolean(
-    room.lastTurnPlayer && room.lastTurnPlayer !== yourPlayer && room.lastTurnStones.length > 0,
-  );
+  const controllingPlayer = currentControllingPlayer(room);
+  const shouldHighlightRecent = room.mode === "local"
+    ? room.lastTurnStones.length > 0
+    : Boolean(room.lastTurnPlayer && room.lastTurnPlayer !== controllingPlayer && room.lastTurnStones.length > 0);
 
   state.room = room;
   lobbyEl.classList.add("hidden");
@@ -509,8 +536,9 @@ function applyRoom(room: RoomState): void {
   }
 
   state.recentHighlights = shouldHighlightRecent ? room.lastTurnStones.slice() : [];
-  roomCodePill.textContent = formatRoomCode(room.code);
+  roomCodePill.textContent = room.mode === "local" ? "local" : formatRoomCode(room.code ?? "");
   copyRoomButton.dataset.player = room.currentPlayer;
+  copyRoomButton.classList.toggle("hidden", room.mode === "local");
 
   if (room.turns > previousTurns && shouldHighlightRecent && !cubesAreVisible(room.lastTurnStones)) {
     centerOnCubes(room.lastTurnStones);
@@ -528,7 +556,9 @@ function updateControls(): void {
   }
 
   bottomBarEl.classList.remove("hidden");
-  const canPlay = room.yourTurn && !room.winner && (room.seat === "one" || room.seat === "two");
+  const canPlay = room.mode === "local"
+    ? !room.winner
+    : room.yourTurn && !room.winner && (room.seat === "one" || room.seat === "two");
 
   if (room.winner) {
     turnPill.textContent = room.winner === "One" ? "red won" : "blue won";
@@ -582,7 +612,8 @@ function toggleSelected(cube: Cube): void {
 }
 
 function isPlayableCell(cube: Cube): boolean {
-  if (!state.room || !state.room.yourTurn || state.room.winner) return false;
+  if (!state.room || state.room.winner) return false;
+  if (state.room.mode !== "local" && !state.room.yourTurn) return false;
   if (state.room.seat === "spectator") return false;
   if (state.room.stones.some((stone) => sameCube(stone, cube))) return false;
   return isWithinPlacementRange(cube);
@@ -720,6 +751,12 @@ canvas.addEventListener(
   { passive: false },
 );
 
+localModeButton.addEventListener("click", () => {
+  startLocalGame().catch((error) => {
+    setLobbyError(error instanceof Error ? error.message : "Could not start local game.");
+  });
+});
+
 createRoomButton.addEventListener("click", () => {
   createRoom().then(startPolling).catch((error) => {
     setLobbyError(error instanceof Error ? error.message : "Could not create room.");
@@ -751,7 +788,7 @@ submitTurnButton.addEventListener("click", () => {
 });
 
 copyRoomButton.addEventListener("click", async () => {
-  if (!state.room) return;
+  if (!state.room || !state.room.code) return;
   try {
     await navigator.clipboard.writeText(state.room.code);
     turnPill.textContent = "code copied";

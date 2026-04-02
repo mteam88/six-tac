@@ -1,16 +1,17 @@
-# Six Tac v1
+# Six Tac
 
-Minimal MVP for infinite hex tic tac toe.
+Minimal infinite hex tic tac toe.
 
 ## Stack
 
 - Frontend: plain TypeScript + canvas
-- Backend: plain TypeScript using Node's built-in `http` module
-- Rules engine: Rust (`engine/`), invoked by the backend through a tiny CLI bridge
-- Storage: in-memory rooms only
+- Runtime: Cloudflare Workers
+- Multiplayer storage: Durable Objects
+- Rules engine: Rust compiled to WebAssembly (`engine/`)
 
 ## Features
 
+- Local play mode
 - Create a room
 - Join with a 6 digit code
 - No usernames or accounts
@@ -18,14 +19,23 @@ Minimal MVP for infinite hex tic tac toe.
 - Infinite hex canvas with pan
 - Polling-based room sync
 
-## Run
+## Develop
 
 ```bash
-npm start
+npm install
+npm run dev
 ```
 
-Then open:
+Then open the Wrangler URL shown in the terminal.
 
-```text
-http://localhost:3000
+## Deploy
+
+```bash
+npm run deploy
 ```
+
+## Notes
+
+- Static assets are built into `public/`.
+- The Rust engine is compiled to `wasm32-unknown-unknown` and bound into the Worker with `wasm-bindgen`.
+- Each room is backed by a Durable Object instance keyed by the 6 digit room code.

@@ -3,6 +3,9 @@ node_modules/
 client.js
 server.js
 *.js.map
+public/
+src/engine-wasm/
+.wrangler/
 
 # Rust build output
 engine/target/

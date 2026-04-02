@@ -10,8 +10,9 @@ const path = require("node:path");
 const nodeCrypto = require("node:crypto");
 const childProcess = require("node:child_process");
 
-type Seat = "one" | "two" | "spectator";
+type Seat = "one" | "two" | "spectator" | "local";
 type Player = "One" | "Two";
+type RoomMode = "online" | "local";
 
 type Cube = {
   x: number;
@@ -42,7 +43,8 @@ type Room = {
 };
 
 type RoomState = {
-  code: string;
+  mode: RoomMode;
+  code: string | null;
   seat: Seat;
   currentPlayer: Player;
   winner: Player | null;
@@ -51,6 +53,7 @@ type RoomState = {
   stones: Stone[];
   lastTurnPlayer: Player | null;
   lastTurnStones: Cube[];
+  gameJson: string;
 };
 
 const rooms = new Map<string, Room>();
@@ -165,6 +168,26 @@ function playerForSeat(seat: Seat): Player | null {
   return null;
 }
 
+function buildStateFromSnapshot(
+  snapshot: EngineSnapshot,
+  options: { mode: RoomMode; code: string | null; seat: Seat; yourTurn: boolean },
+): RoomState {
+  const lastTurn = getLastTurnInfo(snapshot.turns_json);
+  return {
+    mode: options.mode,
+    code: options.code,
+    seat: options.seat,
+    currentPlayer: snapshot.current_player,
+    winner: snapshot.winner,
+    yourTurn: options.yourTurn,
+    turns: snapshot.turn_count,
+    stones: snapshot.stones,
+    lastTurnPlayer: lastTurn.lastTurnPlayer,
+    lastTurnStones: lastTurn.lastTurnStones,
+    gameJson: snapshot.turns_json,
+  };
+}
+
 function getLastTurnInfo(turnsJson: string): { lastTurnPlayer: Player | null; lastTurnStones: Cube[] } {
   const parsed = JSON.parse(turnsJson) as { turns?: Array<{ stones?: Cube[] }> };
   const turns = parsed.turns ?? [];
@@ -184,18 +207,22 @@ function getLastTurnInfo(turnsJson: string): { lastTurnPlayer: Player | null; la
 
 function buildRoomState(room: Room, seat: Seat): RoomState {
   const snapshot = callEngine({ command: "snapshot", game_json: room.turnsJson });
-  const lastTurn = getLastTurnInfo(room.turnsJson);
-  return {
+  return buildStateFromSnapshot(snapshot, {
+    mode: "online",
     code: room.code,
     seat,
-    currentPlayer: snapshot.current_player,
-    winner: snapshot.winner,
     yourTurn: Boolean(playerForSeat(seat) && playerForSeat(seat) === snapshot.current_player && !snapshot.winner),
-    turns: snapshot.turn_count,
-    stones: snapshot.stones,
-    lastTurnPlayer: lastTurn.lastTurnPlayer,
-    lastTurnStones: lastTurn.lastTurnStones,
-  };
+  });
+}
+
+function buildLocalState(gameJson: string): RoomState {
+  const snapshot = callEngine({ command: "snapshot", game_json: gameJson });
+  return buildStateFromSnapshot(snapshot, {
+    mode: "local",
+    code: null,
+    seat: "local",
+    yourTurn: !snapshot.winner,
+  });
 }
 
 function requireRoom(code: string): Room {
@@ -241,6 +268,35 @@ const server = http.createServer(async (request: any, response: any) => {
 
     if (request.method === "GET" && pathname === "/client.js") {
       sendFile(response, path.join(__dirname, "client.js"));
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/local/start") {
+      json(response, 200, buildLocalState('{"turns":[]}'));
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/local/move") {
+      const body = (await readBody(request)) as { gameJson?: string; stones?: Cube[] };
+      if (typeof body.gameJson !== "string") {
+        json(response, 400, { error: "Missing local game state" });
+        return;
+      }
+      if (!Array.isArray(body.stones) || body.stones.length !== 2) {
+        json(response, 400, { error: "A turn must contain exactly 2 stones" });
+        return;
+      }
+      const snapshot = callEngine({
+        command: "play",
+        game_json: body.gameJson,
+        stones: body.stones,
+      });
+      json(response, 200, buildStateFromSnapshot(snapshot, {
+        mode: "local",
+        code: null,
+        seat: "local",
+        yourTurn: !snapshot.winner,
+      }));
       return;
     }
 
