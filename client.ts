@@ -53,6 +53,7 @@ const SQRT3 = Math.sqrt(3);
 const TAP_SLOP = 8;
 const SESSION_KEY = "six-tac-session";
 const POLL_INTERVAL_MS = 1200;
+const ROOM_QUERY_PARAM = "room";
 
 const state = {
   hexSize: 34,
@@ -364,13 +365,25 @@ function setLobbyError(message: string): void {
   lobbyErrorEl.textContent = message;
 }
 
+function updateRoomUrl(code: string | null): void {
+  const url = new URL(window.location.href);
+  if (code) {
+    url.searchParams.set(ROOM_QUERY_PARAM, code);
+  } else {
+    url.searchParams.delete(ROOM_QUERY_PARAM);
+  }
+  window.history.replaceState({}, "", url);
+}
+
 function saveSession(session: Session | null): void {
   state.session = session;
   if (!session) {
     localStorage.removeItem(SESSION_KEY);
+    updateRoomUrl(null);
     return;
   }
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  updateRoomUrl(session.code);
 }
 
 function loadSession(): Session | null {
@@ -383,6 +396,10 @@ function loadSession(): Session | null {
   } catch {
     return null;
   }
+}
+
+function loadRoomCodeFromUrl(): string {
+  return new URL(window.location.href).searchParams.get(ROOM_QUERY_PARAM)?.replace(/\D+/g, "").slice(0, 6) ?? "";
 }
 
 async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
@@ -586,18 +603,32 @@ function stopPolling(): void {
   }
 }
 
-function leaveRoom(): void {
-  stopPolling();
-  saveSession(null);
+function showLobby(message: string, roomCode = ""): void {
   state.room = null;
   state.selected = [];
   state.recentHighlights = [];
   copyRoomButton.dataset.player = "";
   lobbyEl.classList.remove("hidden");
   bottomBarEl.classList.add("hidden");
-  setLobbyError("");
-  joinCodeInput.value = "";
+  setLobbyError(message);
+  joinCodeInput.value = roomCode;
   requestRender();
+}
+
+function leaveRoom(): void {
+  if (!state.room) return;
+  const confirmed = window.confirm(
+    state.room.mode === "local"
+      ? "Leave this local game?"
+      : "Leave this room? You can rejoin later from this browser.",
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  stopPolling();
+  saveSession(null);
+  showLobby("");
 }
 
 function toggleSelected(cube: Cube): void {
@@ -798,6 +829,19 @@ copyRoomButton.addEventListener("click", async () => {
 });
 
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("online", () => {
+  if (!state.session) return;
+  loadRoomState().catch(() => {
+    // keep the saved session so the player can retry automatically or manually
+  });
+});
+window.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state.session) {
+    loadRoomState().catch(() => {
+      // keep the saved session so the player can retry automatically or manually
+    });
+  }
+});
 window.addEventListener("keydown", (event) => {
   if (event.key === "+" || event.key === "=") {
     zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1.12);
@@ -810,19 +854,30 @@ window.addEventListener("keydown", (event) => {
 
 async function restoreSession(): Promise<void> {
   const session = loadSession();
+  const roomCodeFromUrl = loadRoomCodeFromUrl();
   if (!session) {
+    if (roomCodeFromUrl) {
+      joinCodeInput.value = roomCodeFromUrl;
+      setLobbyError("Room code restored. Join to reconnect.");
+    }
     resizeCanvas();
     requestRender();
     return;
   }
 
   saveSession(session);
+  joinCodeInput.value = session.code;
   try {
     await loadRoomState();
     startPolling();
-  } catch {
-    saveSession(null);
-    lobbyEl.classList.remove("hidden");
+  } catch (error) {
+    stopPolling();
+    showLobby(
+      error instanceof Error
+        ? `Could not reconnect yet. Your room is saved — tap Join to retry. (${error.message})`
+        : "Could not reconnect yet. Your room is saved — tap Join to retry.",
+      session.code,
+    );
   }
 }
 
@@ -830,8 +885,14 @@ resizeCanvas();
 updateHovered(window.innerWidth / 2, window.innerHeight / 2);
 updateControls();
 requestRender();
-restoreSession().catch(() => {
-  saveSession(null);
+restoreSession().catch((error) => {
+  const saved = loadSession();
+  showLobby(
+    error instanceof Error
+      ? `Could not reconnect yet. Your room is saved — tap Join to retry. (${error.message})`
+      : "Could not reconnect yet. Your room is saved — tap Join to retry.",
+    saved?.code ?? loadRoomCodeFromUrl(),
+  );
 });
 
 })();
