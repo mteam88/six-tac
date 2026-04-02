@@ -21,6 +21,8 @@ type RoomState = {
   yourTurn: boolean;
   turns: number;
   stones: Stone[];
+  lastTurnPlayer: Player | null;
+  lastTurnStones: Cube[];
 };
 
 type Session = {
@@ -35,15 +37,13 @@ const lobbyErrorEl = document.getElementById("lobby-error") as HTMLDivElement;
 const createRoomButton = document.getElementById("create-room-button") as HTMLButtonElement;
 const joinRoomButton = document.getElementById("join-room-button") as HTMLButtonElement;
 const joinCodeInput = document.getElementById("join-code-input") as HTMLInputElement;
-const topBarEl = document.getElementById("top-bar") as HTMLDivElement;
+const bottomBarEl = document.getElementById("bottom-bar") as HTMLDivElement;
 const roomCodePill = document.getElementById("room-code-pill") as HTMLSpanElement;
-const seatPill = document.getElementById("seat-pill") as HTMLSpanElement;
+const copyRoomButton = document.getElementById("copy-room-button") as HTMLButtonElement;
 const turnPill = document.getElementById("turn-pill") as HTMLSpanElement;
 const leaveRoomButton = document.getElementById("leave-room-button") as HTMLButtonElement;
-const turnPanelEl = document.getElementById("turn-panel") as HTMLDivElement;
-const turnMessageEl = document.getElementById("turn-message") as HTMLDivElement;
 const submitTurnButton = document.getElementById("submit-turn-button") as HTMLButtonElement;
-const coordsEl = document.getElementById("coords") as HTMLDivElement;
+const submitLabel = document.getElementById("submit-label") as HTMLSpanElement;
 
 const SQRT3 = Math.sqrt(3);
 const TAP_SLOP = 8;
@@ -55,6 +55,7 @@ const state = {
   camera: {
     x: window.innerWidth / 2,
     y: window.innerHeight / 2,
+    scale: 1,
   },
   hovered: null as Cube | null,
   selected: [] as Cube[],
@@ -70,9 +71,17 @@ const state = {
         dragging: boolean;
       }
     | null,
+  touchPoints: new Map<number, { x: number; y: number }>(),
+  pinchGesture: null as null | {
+    distance: number;
+    midpointX: number;
+    midpointY: number;
+  },
+  multiTouchGesture: false,
   pollTimer: 0 as number,
   rafPending: false,
   pendingSubmit: false,
+  recentHighlights: [] as Cube[],
 };
 
 function cubeKey(cube: Cube): string {
@@ -115,15 +124,15 @@ function cubeRound(cube: Cube): Cube {
 
 function worldToScreen(x: number, y: number): { x: number; y: number } {
   return {
-    x: x + state.camera.x,
-    y: y + state.camera.y,
+    x: x * state.camera.scale + state.camera.x,
+    y: y * state.camera.scale + state.camera.y,
   };
 }
 
 function screenToWorld(x: number, y: number): { x: number; y: number } {
   return {
-    x: x - state.camera.x,
-    y: y - state.camera.y,
+    x: (x - state.camera.x) / state.camera.scale,
+    y: (y - state.camera.y) / state.camera.scale,
   };
 }
 
@@ -171,6 +180,37 @@ function requestRender(): void {
   requestAnimationFrame(render);
 }
 
+function traceHex(centerX: number, centerY: number, radius: number): void {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i += 1) {
+    const angle = ((60 * i - 30) * Math.PI) / 180;
+    const x = centerX + radius * Math.cos(angle);
+    const y = centerY + radius * Math.sin(angle);
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+}
+
+function drawRecentOutline(centerX: number, centerY: number, radius: number): void {
+  traceHex(centerX, centerY, radius);
+  ctx.lineWidth = Math.max(2.2, 3 * state.camera.scale);
+  ctx.strokeStyle = "rgba(15, 23, 42, 0.96)";
+  ctx.stroke();
+
+  ctx.save();
+  traceHex(centerX, centerY, radius);
+  ctx.lineWidth = Math.max(1.6, 2.2 * state.camera.scale);
+  ctx.setLineDash([10 * state.camera.scale, 8 * state.camera.scale]);
+  ctx.lineDashOffset = 2;
+  ctx.strokeStyle = "rgba(250, 204, 21, 0.98)";
+  ctx.stroke();
+  ctx.restore();
+}
+
 function render(): void {
   state.rafPending = false;
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
@@ -181,7 +221,9 @@ function render(): void {
   }
 
   const selected = new Set(state.selected.map(cubeKey));
+  const recentHighlights = new Set(state.recentHighlights.map(cubeKey));
   const range = getVisibleRange();
+  const hexRadius = state.hexSize * state.camera.scale;
 
   for (let q = range.minQ; q <= range.maxQ; q += 1) {
     for (let r = range.minR; r <= range.maxR; r += 1) {
@@ -190,10 +232,10 @@ function render(): void {
       const screen = worldToScreen(point.x, point.y);
 
       if (
-        screen.x < -state.hexSize * 2 ||
-        screen.x > window.innerWidth + state.hexSize * 2 ||
-        screen.y < -state.hexSize * 2 ||
-        screen.y > window.innerHeight + state.hexSize * 2
+        screen.x < -hexRadius * 2 ||
+        screen.x > window.innerWidth + hexRadius * 2 ||
+        screen.y < -hexRadius * 2 ||
+        screen.y > window.innerHeight + hexRadius * 2
       ) {
         continue;
       }
@@ -201,24 +243,29 @@ function render(): void {
       const stone = occupied.get(cubeKey(cube));
       const isHovered = sameCube(state.hovered, cube);
       const isSelected = selected.has(cubeKey(cube));
+      const isRecent = recentHighlights.has(cubeKey(cube));
+      const isInRange = stone ? true : isWithinPlacementRange(cube);
 
       let fill = "rgba(148, 163, 184, 0.06)";
       let stroke = "rgba(148, 163, 184, 0.26)";
-      let lineWidth = 1.5;
+      let lineWidth = Math.max(1, 1.4 * state.camera.scale);
 
       if (stone?.player === "One") {
         fill = "rgba(239, 68, 68, 0.72)";
         stroke = "rgba(254, 202, 202, 0.95)";
-        lineWidth = 2;
+        lineWidth = Math.max(1.2, 1.8 * state.camera.scale);
       } else if (stone?.player === "Two") {
         fill = "rgba(59, 130, 246, 0.72)";
         stroke = "rgba(191, 219, 254, 0.95)";
-        lineWidth = 2;
+        lineWidth = Math.max(1.2, 1.8 * state.camera.scale);
       } else if (isSelected) {
         const previewColor = seatColor(state.room?.seat ?? "spectator");
         fill = previewColor.fill;
         stroke = previewColor.stroke;
-        lineWidth = 2;
+        lineWidth = Math.max(1.2, 1.8 * state.camera.scale);
+      } else if (!isInRange) {
+        fill = "rgba(148, 163, 184, 0.025)";
+        stroke = "rgba(107, 114, 128, 0.24)";
       }
 
       if (isHovered) {
@@ -226,32 +273,41 @@ function render(): void {
           fill = "rgba(99, 102, 241, 0.18)";
         }
         stroke = "rgba(255, 255, 255, 0.92)";
-        lineWidth = Math.max(lineWidth, 2.25);
+        lineWidth = Math.max(lineWidth, Math.max(1.8, 2.4 * state.camera.scale));
       }
 
-      drawHex(screen.x, screen.y, fill, stroke, lineWidth);
+      drawHex(screen.x, screen.y, hexRadius, fill, stroke, lineWidth);
+
+      if (isRecent) {
+        drawRecentOutline(screen.x, screen.y, hexRadius);
+      }
     }
   }
 }
 
-function drawHex(centerX: number, centerY: number, fillStyle: string, strokeStyle: string, lineWidth: number): void {
-  ctx.beginPath();
-  for (let i = 0; i < 6; i += 1) {
-    const angle = ((60 * i - 30) * Math.PI) / 180;
-    const x = centerX + state.hexSize * Math.cos(angle);
-    const y = centerY + state.hexSize * Math.sin(angle);
-    if (i === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
-  }
-  ctx.closePath();
+function drawHex(
+  centerX: number,
+  centerY: number,
+  radius: number,
+  fillStyle: string,
+  strokeStyle: string,
+  lineWidth: number,
+): void {
+  traceHex(centerX, centerY, radius);
   ctx.fillStyle = fillStyle;
   ctx.fill();
   ctx.lineWidth = lineWidth;
   ctx.strokeStyle = strokeStyle;
   ctx.stroke();
+}
+
+function cubeDistance(a: Cube, b: Cube): number {
+  return (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z)) / 2;
+}
+
+function isWithinPlacementRange(cube: Cube): boolean {
+  const stones = state.room?.stones ?? [];
+  return stones.some((stone) => cubeDistance(stone, cube) <= 8);
 }
 
 function seatColor(seat: Seat): { fill: string; stroke: string } {
@@ -279,11 +335,25 @@ function sameCube(a: Cube | null, b: Cube | null): boolean {
 
 function updateHovered(clientX: number, clientY: number): void {
   state.hovered = screenToCube(clientX, clientY);
-  if (state.hovered) {
-    coordsEl.textContent = `hover: ${state.hovered.x}, ${state.hovered.y}, ${state.hovered.z}`;
-  } else {
-    coordsEl.textContent = "hover: —";
-  }
+}
+
+function zoomAt(screenX: number, screenY: number, factor: number): void {
+  const worldBefore = screenToWorld(screenX, screenY);
+  state.camera.scale *= factor;
+  state.camera.x = screenX - worldBefore.x * state.camera.scale;
+  state.camera.y = screenY - worldBefore.y * state.camera.scale;
+}
+
+function getTouchGesture(): { midpointX: number; midpointY: number; distance: number } | null {
+  if (state.touchPoints.size < 2) return null;
+  const [first, second] = Array.from(state.touchPoints.values());
+  const dx = second.x - first.x;
+  const dy = second.y - first.y;
+  return {
+    midpointX: (first.x + second.x) / 2,
+    midpointY: (first.y + second.y) / 2,
+    distance: Math.hypot(dx, dy),
+  };
 }
 
 function setLobbyError(message: string): void {
@@ -360,7 +430,6 @@ async function submitTurn(): Promise<void> {
   }
 
   state.pendingSubmit = true;
-  setTurnMessage("Playing turn...");
   updateControls();
 
   try {
@@ -374,7 +443,7 @@ async function submitTurn(): Promise<void> {
     state.selected = [];
     applyRoom(room);
   } catch (error) {
-    setTurnMessage(error instanceof Error ? error.message : "Could not play turn.");
+    turnPill.textContent = error instanceof Error ? error.message : "Could not play turn";
   } finally {
     state.pendingSubmit = false;
     updateControls();
@@ -382,10 +451,54 @@ async function submitTurn(): Promise<void> {
   }
 }
 
+function formatRoomCode(code: string): string {
+  return `${code.slice(0, 3)} ${code.slice(3, 6)}`;
+}
+
+function seatPlayer(seat: Seat): Player | null {
+  return seat === "one" ? "One" : seat === "two" ? "Two" : null;
+}
+
+function centerOnCubes(cubes: Cube[]): void {
+  if (cubes.length === 0) return;
+  let sumX = 0;
+  let sumY = 0;
+  for (const cube of cubes) {
+    const point = hexToPixel(cube);
+    sumX += point.x;
+    sumY += point.y;
+  }
+  const avgX = sumX / cubes.length;
+  const avgY = sumY / cubes.length;
+  state.camera.x = window.innerWidth / 2 - avgX * state.camera.scale;
+  state.camera.y = window.innerHeight / 2 - avgY * state.camera.scale;
+}
+
+function cubesAreVisible(cubes: Cube[]): boolean {
+  const margin = 100;
+  return cubes.every((cube) => {
+    const point = hexToPixel(cube);
+    const screen = worldToScreen(point.x, point.y);
+    return (
+      screen.x >= margin &&
+      screen.x <= window.innerWidth - margin &&
+      screen.y >= margin &&
+      screen.y <= window.innerHeight - margin
+    );
+  });
+}
+
 function applyRoom(room: RoomState): void {
+  const previousRoom = state.room;
+  const previousTurns = previousRoom?.turns ?? 0;
+  const yourPlayer = seatPlayer(room.seat);
+  const shouldHighlightRecent = Boolean(
+    room.lastTurnPlayer && room.lastTurnPlayer !== yourPlayer && room.lastTurnStones.length > 0,
+  );
+
   state.room = room;
   lobbyEl.classList.add("hidden");
-  topBarEl.classList.remove("hidden");
+  bottomBarEl.classList.remove("hidden");
 
   if (!room.yourTurn || room.winner) {
     state.selected = [];
@@ -395,63 +508,43 @@ function applyRoom(room: RoomState): void {
     });
   }
 
-  roomCodePill.textContent = `room ${room.code}`;
-  seatPill.textContent = room.seat === "one" ? "you are red" : room.seat === "two" ? "you are blue" : "spectator";
+  state.recentHighlights = shouldHighlightRecent ? room.lastTurnStones.slice() : [];
+  roomCodePill.textContent = formatRoomCode(room.code);
+  copyRoomButton.dataset.player = room.currentPlayer;
 
-  if (room.winner) {
-    turnPill.textContent = `${room.winner === "One" ? "red" : "blue"} won`;
-  } else if (room.yourTurn) {
-    turnPill.textContent = "your turn";
-  } else {
-    turnPill.textContent = `${room.currentPlayer === "One" ? "red" : "blue"} to move`;
+  if (room.turns > previousTurns && shouldHighlightRecent && !cubesAreVisible(room.lastTurnStones)) {
+    centerOnCubes(room.lastTurnStones);
   }
 
   updateControls();
   requestRender();
 }
 
-function setTurnMessage(message: string): void {
-  turnMessageEl.textContent = message;
-}
-
 function updateControls(): void {
   const room = state.room;
   if (!room) {
-    topBarEl.classList.add("hidden");
-    turnPanelEl.classList.add("hidden");
+    bottomBarEl.classList.add("hidden");
     return;
   }
 
+  bottomBarEl.classList.remove("hidden");
   const canPlay = room.yourTurn && !room.winner && (room.seat === "one" || room.seat === "two");
-  if (!canPlay) {
-    turnPanelEl.classList.remove("hidden");
-    submitTurnButton.disabled = true;
-    if (room.winner) {
-      setTurnMessage(room.winner === "One" ? "Red wins." : "Blue wins.");
-    } else if (room.seat === "spectator") {
-      setTurnMessage("Watching room.");
-    } else {
-      setTurnMessage("Waiting for the other player.");
-    }
-    return;
+
+  if (room.winner) {
+    turnPill.textContent = room.winner === "One" ? "red won" : "blue won";
+  } else {
+    turnPill.textContent = room.currentPlayer === "One" ? "red to move" : "blue to move";
   }
 
-  turnPanelEl.classList.remove("hidden");
-  if (state.selected.length === 0) {
-    setTurnMessage("Select 2 empty hexes.");
-  } else if (state.selected.length === 1) {
-    setTurnMessage("Select 1 more hex.");
-  } else {
-    setTurnMessage("Ready to play.");
-  }
-  submitTurnButton.disabled = state.selected.length !== 2 || state.pendingSubmit;
+  submitLabel.textContent = state.pendingSubmit ? "Playing" : "Play";
+  submitTurnButton.disabled = !canPlay || state.selected.length !== 2 || state.pendingSubmit;
 }
 
 function startPolling(): void {
   stopPolling();
   state.pollTimer = window.setInterval(() => {
     loadRoomState().catch((error) => {
-      setTurnMessage(error instanceof Error ? error.message : "Connection lost.");
+      turnPill.textContent = error instanceof Error ? error.message : "Connection lost";
     });
   }, POLL_INTERVAL_MS);
 }
@@ -468,9 +561,10 @@ function leaveRoom(): void {
   saveSession(null);
   state.room = null;
   state.selected = [];
+  state.recentHighlights = [];
+  copyRoomButton.dataset.player = "";
   lobbyEl.classList.remove("hidden");
-  topBarEl.classList.add("hidden");
-  turnPanelEl.classList.add("hidden");
+  bottomBarEl.classList.add("hidden");
   setLobbyError("");
   joinCodeInput.value = "";
   requestRender();
@@ -490,11 +584,26 @@ function toggleSelected(cube: Cube): void {
 function isPlayableCell(cube: Cube): boolean {
   if (!state.room || !state.room.yourTurn || state.room.winner) return false;
   if (state.room.seat === "spectator") return false;
-  return !state.room.stones.some((stone) => sameCube(stone, cube));
+  if (state.room.stones.some((stone) => sameCube(stone, cube))) return false;
+  return isWithinPlacementRange(cube);
 }
 
 canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
+  updateHovered(event.clientX, event.clientY);
+
+  if (event.pointerType === "touch") {
+    state.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (state.touchPoints.size >= 2) {
+      state.multiTouchGesture = true;
+      state.pointer = null;
+      state.pinchGesture = getTouchGesture();
+      canvas.classList.add("dragging");
+      requestRender();
+      return;
+    }
+  }
+
   state.pointer = {
     id: event.pointerId,
     startX: event.clientX,
@@ -503,13 +612,31 @@ canvas.addEventListener("pointerdown", (event) => {
     lastY: event.clientY,
     dragging: false,
   };
-  updateHovered(event.clientX, event.clientY);
   canvas.classList.add("dragging");
   requestRender();
 });
 
 canvas.addEventListener("pointermove", (event) => {
   updateHovered(event.clientX, event.clientY);
+
+  if (event.pointerType === "touch" && state.touchPoints.has(event.pointerId)) {
+    state.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (state.touchPoints.size >= 2) {
+      const gesture = getTouchGesture();
+      if (gesture && state.pinchGesture) {
+        state.camera.x += gesture.midpointX - state.pinchGesture.midpointX;
+        state.camera.y += gesture.midpointY - state.pinchGesture.midpointY;
+        if (state.pinchGesture.distance > 0 && gesture.distance > 0) {
+          zoomAt(gesture.midpointX, gesture.midpointY, gesture.distance / state.pinchGesture.distance);
+        }
+      }
+      state.multiTouchGesture = true;
+      state.pinchGesture = gesture;
+      requestRender();
+      return;
+    }
+  }
 
   if (!state.pointer || state.pointer.id !== event.pointerId) {
     requestRender();
@@ -533,17 +660,31 @@ canvas.addEventListener("pointermove", (event) => {
 });
 
 function finishPointer(event: PointerEvent): void {
+  if (event.pointerType === "touch") {
+    state.touchPoints.delete(event.pointerId);
+    if (state.touchPoints.size < 2) {
+      state.pinchGesture = null;
+      state.multiTouchGesture = false;
+    }
+  }
+
   if (!state.pointer || state.pointer.id !== event.pointerId) {
+    if (state.touchPoints.size === 0) {
+      canvas.classList.remove("dragging");
+    }
+    requestRender();
     return;
   }
 
   updateHovered(event.clientX, event.clientY);
 
-  if (!state.pointer.dragging && state.hovered && isPlayableCell(state.hovered)) {
+  if (!state.multiTouchGesture && !state.pointer.dragging && state.hovered && isPlayableCell(state.hovered)) {
     toggleSelected(state.hovered);
   }
 
-  canvas.classList.remove("dragging");
+  if (state.touchPoints.size === 0) {
+    canvas.classList.remove("dragging");
+  }
   state.pointer = null;
   requestRender();
 }
@@ -553,7 +694,6 @@ canvas.addEventListener("pointercancel", finishPointer);
 canvas.addEventListener("pointerleave", () => {
   if (!state.pointer) {
     state.hovered = null;
-    coordsEl.textContent = "hover: —";
     requestRender();
   }
 });
@@ -565,8 +705,15 @@ canvas.addEventListener(
     let scale = 1;
     if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) scale = 16;
     if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) scale = window.innerHeight;
-    state.camera.x -= event.deltaX * scale;
-    state.camera.y -= event.deltaY * scale;
+
+    if (event.ctrlKey || event.metaKey) {
+      const factor = Math.exp((-event.deltaY * scale) / 1200);
+      zoomAt(event.clientX, event.clientY, factor);
+    } else {
+      state.camera.x -= event.deltaX * scale;
+      state.camera.y -= event.deltaY * scale;
+    }
+
     updateHovered(event.clientX, event.clientY);
     requestRender();
   },
@@ -599,11 +746,30 @@ joinCodeInput.addEventListener("keydown", (event) => {
 leaveRoomButton.addEventListener("click", leaveRoom);
 submitTurnButton.addEventListener("click", () => {
   submitTurn().catch((error) => {
-    setTurnMessage(error instanceof Error ? error.message : "Could not play turn.");
+    turnPill.textContent = error instanceof Error ? error.message : "Could not play turn";
   });
 });
 
+copyRoomButton.addEventListener("click", async () => {
+  if (!state.room) return;
+  try {
+    await navigator.clipboard.writeText(state.room.code);
+    turnPill.textContent = "code copied";
+  } catch {
+    turnPill.textContent = state.room.code;
+  }
+});
+
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "+" || event.key === "=") {
+    zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1.12);
+    requestRender();
+  } else if (event.key === "-") {
+    zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1 / 1.12);
+    requestRender();
+  }
+});
 
 async function restoreSession(): Promise<void> {
   const session = loadSession();

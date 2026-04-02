@@ -39,6 +39,7 @@ use std::error::Error;
 use std::fmt;
 
 const WIN_LENGTH: u8 = 6;
+const MAX_PLACEMENT_DISTANCE: u32 = 8;
 const AXES: [(Cube, Cube); 3] = [
     (Cube::raw(1, -1, 0), Cube::raw(-1, 1, 0)),
     (Cube::raw(1, 0, -1), Cube::raw(-1, 0, 1)),
@@ -270,6 +271,8 @@ pub enum TurnError {
     Occupied(Cube),
     /// Both stones in the same turn target the same cell.
     DuplicateStone(Cube),
+    /// A target cell is farther than the maximum allowed placement radius from all existing stones.
+    TooFar(Cube),
     /// The game already has a winner.
     GameAlreadyOver(Player),
 }
@@ -290,6 +293,14 @@ impl fmt::Display for TurnError {
                 cube.x(),
                 cube.y(),
                 cube.z()
+            ),
+            Self::TooFar(cube) => write!(
+                f,
+                "cell ({}, {}, {}) is farther than {} hexes from every existing stone",
+                cube.x(),
+                cube.y(),
+                cube.z(),
+                MAX_PLACEMENT_DISTANCE
             ),
             Self::GameAlreadyOver(player) => write!(f, "game already won by {player:?}"),
         }
@@ -493,7 +504,7 @@ impl Game {
         self.occupied.get(&coord).copied()
     }
 
-    /// Returns `true` if both target cells are currently empty, distinct, and the game is not over.
+    /// Returns `true` if both target cells are currently empty, distinct, within the placement radius, and the game is not over.
     #[must_use]
     #[inline]
     pub fn is_legal(&self, stones: [Cube; 2]) -> bool {
@@ -618,8 +629,21 @@ impl Game {
         if self.occupied.contains_key(&b) {
             return Err(TurnError::Occupied(b));
         }
+        if !self.is_within_placement_range(a) {
+            return Err(TurnError::TooFar(a));
+        }
+        if !self.is_within_placement_range(b) {
+            return Err(TurnError::TooFar(b));
+        }
 
         Ok(())
+    }
+
+    #[inline]
+    fn is_within_placement_range(&self, coord: Cube) -> bool {
+        self.occupied
+            .keys()
+            .any(|&occupied| occupied.distance(coord) <= MAX_PLACEMENT_DISTANCE)
     }
 
     #[inline]
@@ -705,6 +729,17 @@ mod tests {
             .play([Cube::ORIGIN, Cube::from_axial(1, 0)])
             .unwrap_err();
         assert_eq!(err, TurnError::Occupied(Cube::ORIGIN));
+    }
+
+    #[test]
+    fn rejects_cells_outside_max_placement_distance() {
+        let mut game = Game::new();
+        let coord = Cube::from_axial(9, 0);
+        let err = game
+            .play([coord, Cube::from_axial(1, 0)])
+            .unwrap_err();
+        assert_eq!(err, TurnError::TooFar(coord));
+        assert!(!game.is_legal([coord, Cube::from_axial(1, 0)]));
     }
 
     #[test]

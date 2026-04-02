@@ -11,39 +11,41 @@
 
     <div id="lobby" class="overlay">
       <div class="card">
-        <div class="eyebrow">hex tic tac toe</div>
         <h1>Six Tac</h1>
-        <p class="subtle">Create a room or join one with a 6 digit code. No accounts, no usernames.</p>
 
         <div class="actions-stack">
-          <button id="create-room-button" class="button button-primary">Create room</button>
+          <button id="create-room-button" class="button button-primary button-icon">
+            <span class="button-glyph">＋</span>
+            <span>Create room</span>
+          </button>
           <div class="join-row">
             <input id="join-code-input" inputmode="numeric" maxlength="6" placeholder="123456" aria-label="Room code" />
-            <button id="join-room-button" class="button">Join</button>
+            <button id="join-room-button" class="button button-icon" aria-label="Join room">
+              <span class="button-glyph">→</span>
+            </button>
           </div>
           <div id="lobby-error" class="error"></div>
         </div>
       </div>
     </div>
 
-    <div id="top-bar" class="top-bar hidden">
-      <div class="top-bar-group">
-        <span class="pill" id="room-code-pill">room —</span>
-        <span class="pill" id="seat-pill">spectator</span>
-        <span class="pill" id="turn-pill">waiting</span>
+    <div id="bottom-bar" class="bottom-bar hidden">
+      <div class="bottom-main">
+        <button id="copy-room-button" class="chip chip-code" aria-label="Copy room code">
+          <span id="room-code-icon" class="chip-icon chip-icon-dot"></span>
+          <span id="room-code-pill">—</span>
+        </button>
+        <span class="chip" id="turn-pill">waiting</span>
       </div>
-      <div class="top-bar-group">
-        <button id="leave-room-button" class="button button-small">Leave</button>
+      <div class="bottom-actions">
+        <button id="submit-turn-button" class="button button-primary button-small button-icon" disabled>
+          <span class="button-glyph">✓</span>
+          <span id="submit-label">Play</span>
+        </button>
+        <button id="leave-room-button" class="button button-small button-icon" aria-label="Leave room">
+          <span class="button-glyph">✕</span>
+        </button>
       </div>
-    </div>
-
-    <div id="turn-panel" class="turn-panel hidden">
-      <div id="turn-message" class="turn-message">Select 2 empty hexes.</div>
-      <button id="submit-turn-button" class="button button-primary button-small" disabled>Play turn</button>
-    </div>
-
-    <div class="coords-bar">
-      <div id="coords">hover: —</div>
     </div>
 
     <script src="client.js"></script>

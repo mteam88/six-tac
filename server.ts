@@ -49,6 +49,8 @@ type RoomState = {
   yourTurn: boolean;
   turns: number;
   stones: Stone[];
+  lastTurnPlayer: Player | null;
+  lastTurnStones: Cube[];
 };
 
 const rooms = new Map<string, Room>();
@@ -163,8 +165,26 @@ function playerForSeat(seat: Seat): Player | null {
   return null;
 }
 
+function getLastTurnInfo(turnsJson: string): { lastTurnPlayer: Player | null; lastTurnStones: Cube[] } {
+  const parsed = JSON.parse(turnsJson) as { turns?: Array<{ stones?: Cube[] }> };
+  const turns = parsed.turns ?? [];
+  if (turns.length === 0) {
+    return {
+      lastTurnPlayer: null,
+      lastTurnStones: [],
+    };
+  }
+
+  const index = turns.length - 1;
+  return {
+    lastTurnPlayer: index % 2 === 0 ? "Two" : "One",
+    lastTurnStones: turns[index].stones ?? [],
+  };
+}
+
 function buildRoomState(room: Room, seat: Seat): RoomState {
   const snapshot = callEngine({ command: "snapshot", game_json: room.turnsJson });
+  const lastTurn = getLastTurnInfo(room.turnsJson);
   return {
     code: room.code,
     seat,
@@ -173,6 +193,8 @@ function buildRoomState(room: Room, seat: Seat): RoomState {
     yourTurn: Boolean(playerForSeat(seat) && playerForSeat(seat) === snapshot.current_player && !snapshot.winner),
     turns: snapshot.turn_count,
     stones: snapshot.stones,
+    lastTurnPlayer: lastTurn.lastTurnPlayer,
+    lastTurnStones: lastTurn.lastTurnStones,
   };
 }
 
@@ -299,15 +321,7 @@ const server = http.createServer(async (request: any, response: any) => {
         stones: body.stones,
       });
       room.turnsJson = nextSnapshot.turns_json;
-      json(response, 200, {
-        code: room.code,
-        seat,
-        currentPlayer: nextSnapshot.current_player,
-        winner: nextSnapshot.winner,
-        yourTurn: Boolean(playerForSeat(seat) && playerForSeat(seat) === nextSnapshot.current_player && !nextSnapshot.winner),
-        turns: nextSnapshot.turn_count,
-        stones: nextSnapshot.stones,
-      });
+      json(response, 200, buildRoomState(room, seat));
       return;
     }
 
