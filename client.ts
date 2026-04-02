@@ -1,4 +1,7 @@
-(() => {
+import initLocalEngine, { play_json as localPlayJson, snapshot_json as localSnapshotJson } from "./local-engine/engine.js";
+
+void (async () => {
+await initLocalEngine();
 
 type Seat = "one" | "two" | "spectator" | "local";
 type Player = "One" | "Two";
@@ -12,6 +15,15 @@ type Cube = {
 
 type Stone = Cube & {
   player: Player;
+};
+
+type EngineSnapshot = {
+  current_player: Player;
+  winner: Player | null;
+  turn_count: number;
+  stone_count: number;
+  turns_json: string;
+  stones: Stone[];
 };
 
 type RoomState = {
@@ -52,8 +64,10 @@ const submitLabel = document.getElementById("submit-label") as HTMLSpanElement;
 const SQRT3 = Math.sqrt(3);
 const TAP_SLOP = 8;
 const SESSION_KEY = "six-tac-session";
+const LOCAL_GAME_KEY = "six-tac-local-game";
 const POLL_INTERVAL_MS = 1200;
 const ROOM_QUERY_PARAM = "room";
+const EMPTY_GAME_JSON = '{"turns":[]}';
 
 const state = {
   hexSize: 34,
@@ -365,6 +379,64 @@ function setLobbyError(message: string): void {
   lobbyErrorEl.textContent = message;
 }
 
+function callLocalSnapshot(gameJson: string): EngineSnapshot {
+  return JSON.parse(localSnapshotJson(gameJson)) as EngineSnapshot;
+}
+
+function callLocalPlay(gameJson: string, stones: Cube[]): EngineSnapshot {
+  return JSON.parse(localPlayJson(gameJson, JSON.stringify(stones))) as EngineSnapshot;
+}
+
+function buildLocalState(gameJson: string): RoomState {
+  const snapshot = callLocalSnapshot(gameJson);
+  const parsed = JSON.parse(snapshot.turns_json) as { turns?: Array<{ stones?: Cube[] }> };
+  const turns = parsed.turns ?? [];
+  const lastTurn = turns.length === 0
+    ? { lastTurnPlayer: null as Player | null, lastTurnStones: [] as Cube[] }
+    : {
+        lastTurnPlayer: (turns.length - 1) % 2 === 0 ? "Two" as Player : "One" as Player,
+        lastTurnStones: turns[turns.length - 1].stones ?? [],
+      };
+
+  return {
+    mode: "local",
+    code: null,
+    seat: "local",
+    currentPlayer: snapshot.current_player,
+    winner: snapshot.winner,
+    yourTurn: !snapshot.winner,
+    turns: snapshot.turn_count,
+    stones: snapshot.stones,
+    lastTurnPlayer: lastTurn.lastTurnPlayer,
+    lastTurnStones: lastTurn.lastTurnStones,
+    gameJson: snapshot.turns_json,
+  };
+}
+
+function saveLocalGame(gameJson: string | null): void {
+  if (!gameJson) {
+    localStorage.removeItem(LOCAL_GAME_KEY);
+    return;
+  }
+  localStorage.setItem(LOCAL_GAME_KEY, gameJson);
+}
+
+function loadLocalGame(): string | null {
+  const raw = localStorage.getItem(LOCAL_GAME_KEY);
+  return raw && raw.trim() ? raw : null;
+}
+
+function registerServiceWorker(): void {
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./service-worker.js").catch(() => {
+      // Offline local mode still works for the current tab if the app is already loaded.
+    });
+  });
+}
+
 function updateRoomUrl(code: string | null): void {
   const url = new URL(window.location.href);
   if (code) {
@@ -420,11 +492,20 @@ async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
 async function startLocalGame(): Promise<void> {
   setLobbyError("");
   saveSession(null);
-  const room = await requestJson<RoomState>("/api/local/start", {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-  applyRoom(room);
+  const savedGameJson = loadLocalGame();
+  if (!savedGameJson) {
+    applyRoom(buildLocalState(EMPTY_GAME_JSON));
+    return;
+  }
+
+  const savedRoom = buildLocalState(savedGameJson);
+  if (savedRoom.winner) {
+    saveLocalGame(null);
+    applyRoom(buildLocalState(EMPTY_GAME_JSON));
+    return;
+  }
+
+  applyRoom(savedRoom);
 }
 
 async function createRoom(): Promise<void> {
@@ -465,13 +546,7 @@ async function submitTurn(): Promise<void> {
 
   try {
     const room = state.room.mode === "local"
-      ? await requestJson<RoomState>("/api/local/move", {
-          method: "POST",
-          body: JSON.stringify({
-            gameJson: state.room.gameJson,
-            stones: state.selected,
-          }),
-        })
+      ? buildLocalState(callLocalPlay(state.room.gameJson, state.selected).turns_json)
       : await requestJson<RoomState>(`/api/rooms/${state.session?.code}/move`, {
           method: "POST",
           body: JSON.stringify({
@@ -541,6 +616,9 @@ function applyRoom(room: RoomState): void {
     : Boolean(room.lastTurnPlayer && room.lastTurnPlayer !== controllingPlayer && room.lastTurnStones.length > 0);
 
   state.room = room;
+  if (room.mode === "local") {
+    saveLocalGame(room.gameJson);
+  }
   lobbyEl.classList.add("hidden");
   bottomBarEl.classList.remove("hidden");
 
@@ -619,7 +697,7 @@ function leaveRoom(): void {
   if (!state.room) return;
   const confirmed = window.confirm(
     state.room.mode === "local"
-      ? "Leave this local game?"
+      ? "Leave this local game? It will stay saved on this device so you can resume offline later."
       : "Leave this room? You can rejoin later from this browser.",
   );
   if (!confirmed) {
@@ -627,7 +705,9 @@ function leaveRoom(): void {
   }
 
   stopPolling();
-  saveSession(null);
+  if (state.room.mode === "online") {
+    saveSession(null);
+  }
   showLobby("");
 }
 
@@ -855,38 +935,60 @@ window.addEventListener("keydown", (event) => {
 async function restoreSession(): Promise<void> {
   const session = loadSession();
   const roomCodeFromUrl = loadRoomCodeFromUrl();
-  if (!session) {
-    if (roomCodeFromUrl) {
-      joinCodeInput.value = roomCodeFromUrl;
-      setLobbyError("Room code restored. Join to reconnect.");
+  if (session) {
+    saveSession(session);
+    joinCodeInput.value = session.code;
+    try {
+      await loadRoomState();
+      startPolling();
+      return;
+    } catch (error) {
+      stopPolling();
+      showLobby(
+        error instanceof Error
+          ? `Could not reconnect yet. Your room is saved — tap Join to retry. (${error.message})`
+          : "Could not reconnect yet. Your room is saved — tap Join to retry.",
+        session.code,
+      );
+      return;
     }
-    resizeCanvas();
-    requestRender();
-    return;
   }
 
-  saveSession(session);
-  joinCodeInput.value = session.code;
-  try {
-    await loadRoomState();
-    startPolling();
-  } catch (error) {
-    stopPolling();
-    showLobby(
-      error instanceof Error
-        ? `Could not reconnect yet. Your room is saved — tap Join to retry. (${error.message})`
-        : "Could not reconnect yet. Your room is saved — tap Join to retry.",
-      session.code,
-    );
+  const localGameJson = loadLocalGame();
+  if (localGameJson) {
+    try {
+      applyRoom(buildLocalState(localGameJson));
+      return;
+    } catch {
+      saveLocalGame(null);
+    }
   }
+
+  if (roomCodeFromUrl) {
+    joinCodeInput.value = roomCodeFromUrl;
+    setLobbyError("Room code restored. Join to reconnect.");
+  }
+
+  resizeCanvas();
+  requestRender();
 }
 
+registerServiceWorker();
 resizeCanvas();
 updateHovered(window.innerWidth / 2, window.innerHeight / 2);
 updateControls();
 requestRender();
 restoreSession().catch((error) => {
   const saved = loadSession();
+  const localGameJson = loadLocalGame();
+  if (localGameJson) {
+    try {
+      applyRoom(buildLocalState(localGameJson));
+      return;
+    } catch {
+      saveLocalGame(null);
+    }
+  }
   showLobby(
     error instanceof Error
       ? `Could not reconnect yet. Your room is saved — tap Join to retry. (${error.message})`
@@ -895,4 +997,10 @@ restoreSession().catch((error) => {
   );
 });
 
-})();
+})().catch((error) => {
+  console.error(error);
+  const errorEl = document.getElementById("lobby-error");
+  if (errorEl) {
+    errorEl.textContent = error instanceof Error ? error.message : "Could not load Six Tac.";
+  }
+});

@@ -12,6 +12,7 @@ Minimal infinite hex tic tac toe.
 ## Features
 
 - Local play mode
+- Fully offline local games after the app has been loaded once
 - Create a room
 - Join with a 6 digit code
 - No usernames or accounts
@@ -37,5 +38,6 @@ npm run deploy
 ## Notes
 
 - Static assets are built into `public/`.
-- The Rust engine is compiled to `wasm32-unknown-unknown` and bound into the Worker with `wasm-bindgen`.
-- Each room is backed by a Durable Object instance keyed by the 6 digit room code.
+- The Rust engine is compiled to `wasm32-unknown-unknown` and bound both into the Worker and the browser with `wasm-bindgen`.
+- A service worker caches the app shell and browser wasm so local games can resume offline after the first successful load.
+- Each online room is backed by a Durable Object instance keyed by the 6 digit room code.

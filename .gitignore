@@ -4,6 +4,7 @@ client.js
 server.js
 *.js.map
 public/
+local-engine/
 src/engine-wasm/
 .wrangler/
 
