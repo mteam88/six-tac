@@ -234,6 +234,29 @@ input::placeholder {
   text-overflow: ellipsis;
 }
 
+.site-footer {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  z-index: 1;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+}
+
+.site-footer a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  color: var(--text);
+}
+
 @media (max-width: 720px) {
   .overlay {
     padding: 16px;
@@ -259,6 +282,10 @@ input::placeholder {
   .bottom-actions {
     justify-content: flex-end;
     align-self: end;
+  }
+
+  .site-footer {
+    bottom: 64px;
   }
 }
 
