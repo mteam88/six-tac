@@ -1,0 +1,8 @@
+{
+  "name": "six-tac",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "start": "tsc && node server.js"
+  }
+}

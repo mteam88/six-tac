@@ -1,0 +1,13 @@
+# Node / TypeScript build output
+node_modules/
+client.js
+server.js
+*.js.map
+
+# Rust build output
+engine/target/
+
+# Logs and local files
+npm-debug.log*
+.DS_Store
+.env

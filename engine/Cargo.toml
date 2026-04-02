@@ -1,0 +1,15 @@
+[package]
+name = "hex-tic-tac-engine"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance core engine for hex tic tac toe on an infinite cube-coordinate hex grid"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/hex-tic-tac-engine"
+readme = "README.md"
+keywords = ["game", "hex", "engine", "board-game", "tic-tac-toe"]
+categories = ["games", "algorithms"]
+
+[dependencies]
+rustc-hash = "2.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
