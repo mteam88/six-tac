@@ -13,9 +13,17 @@ binding = "ASSETS"
 run_worker_first = ["/api/*"]
 
 [[durable_objects.bindings]]
-name = "ROOMS"
-class_name = "RoomObject"
+name = "SESSIONS"
+class_name = "SessionObject"
+
+[[durable_objects.bindings]]
+name = "MATCHMAKER"
+class_name = "MatchmakerObject"
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["SessionObject", "MatchmakerObject"]

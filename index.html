@@ -18,10 +18,31 @@
             <span class="button-glyph">◉</span>
             <span>Local</span>
           </button>
-          <button id="create-room-button" class="button button-primary button-icon">
-            <span class="button-glyph">＋</span>
-            <span>Create room</span>
-          </button>
+
+          <div class="action-row">
+            <button id="create-room-button" class="button button-primary button-icon action-main">
+              <span class="button-glyph">＋</span>
+              <span>Create room</span>
+            </button>
+            <button id="create-room-settings-button" class="button button-ghost button-square" aria-label="Room settings">⚙</button>
+          </div>
+
+          <div class="action-row">
+            <button id="play-bot-button" class="button button-icon action-main">
+              <span class="button-glyph">✦</span>
+              <span>Play bot</span>
+            </button>
+            <button id="play-bot-settings-button" class="button button-ghost button-square" aria-label="Bot settings">⚙</button>
+          </div>
+
+          <div class="action-row">
+            <button id="find-match-button" class="button button-icon action-main">
+              <span class="button-glyph">◎</span>
+              <span>Find match</span>
+            </button>
+            <button id="find-match-settings-button" class="button button-ghost button-square" aria-label="Matchmaking settings">⚙</button>
+          </div>
+
           <div class="join-row">
             <input id="join-code-input" inputmode="numeric" maxlength="6" placeholder="123456" aria-label="Room code" />
             <button id="join-room-button" class="button button-icon" aria-label="Join room">
@@ -41,6 +62,16 @@
         </button>
         <span class="chip" id="turn-pill">waiting</span>
       </div>
+      <div id="clock-panel" class="clock-panel hidden" aria-label="Game clocks">
+        <div id="clock-one" class="clock-card clock-card-red">
+          <span class="clock-label">red</span>
+          <span id="clock-one-time" class="clock-time">3:00</span>
+        </div>
+        <div id="clock-two" class="clock-card clock-card-blue">
+          <span class="clock-label">blue</span>
+          <span id="clock-two-time" class="clock-time">3:00</span>
+        </div>
+      </div>
       <div class="bottom-actions">
         <button id="submit-turn-button" class="button button-primary button-small button-icon" disabled>
           <span class="button-glyph">✓</span>
@@ -49,6 +80,27 @@
         <button id="leave-room-button" class="button button-small button-icon" aria-label="Leave room">
           <span class="button-glyph">↩</span>
         </button>
+      </div>
+    </div>
+
+    <div id="settings-modal" class="overlay hidden">
+      <div class="card settings-card">
+        <h2 id="settings-title">Settings</h2>
+        <div class="settings-stack">
+          <label class="settings-field">
+            <span>Turn clock</span>
+            <select id="settings-clock-select"></select>
+          </label>
+          <label id="settings-bot-row" class="settings-field hidden">
+            <span>Bot</span>
+            <select id="settings-bot-select"></select>
+          </label>
+          <p id="settings-hint" class="settings-hint"></p>
+        </div>
+        <div class="modal-actions">
+          <button id="settings-cancel-button" class="button">Cancel</button>
+          <button id="settings-save-button" class="button button-primary">Save</button>
+        </div>
       </div>
     </div>
 

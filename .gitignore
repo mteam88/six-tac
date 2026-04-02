@@ -6,10 +6,12 @@ server.js
 public/
 local-engine/
 src/engine-wasm/
+src/bot-wasm/
 .wrangler/
 
 # Rust build output
 engine/target/
+bots/target/
 
 # Logs and local files
 npm-debug.log*

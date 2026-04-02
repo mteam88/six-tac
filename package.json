@@ -2,9 +2,10 @@
   "name": "six-tac",
   "private": true,
   "scripts": {
-    "build": "rm -rf public src/engine-wasm local-engine && npm run build:engine && npm run build:client",
+    "build": "rm -rf public src/engine-wasm src/bot-wasm local-engine && npm run build:engine && npm run build:bots && npm run build:client",
     "build:client": "tsc && cp index.html styles.css service-worker.js public/ && mkdir -p public/local-engine && cp local-engine/* public/local-engine/",
     "build:engine": "cargo build --manifest-path engine/Cargo.toml --target wasm32-unknown-unknown --release && wasm-bindgen engine/target/wasm32-unknown-unknown/release/hex_tic_tac_engine.wasm --out-dir src/engine-wasm --out-name engine --target bundler && wasm-bindgen engine/target/wasm32-unknown-unknown/release/hex_tic_tac_engine.wasm --out-dir local-engine --out-name engine --target web",
+    "build:bots": "cargo build --manifest-path bots/Cargo.toml --target wasm32-unknown-unknown --release && wasm-bindgen bots/target/wasm32-unknown-unknown/release/six_tac_bots.wasm --out-dir src/bot-wasm --out-name bots --target bundler",
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "start": "npm run dev"
