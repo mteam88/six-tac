@@ -43,6 +43,11 @@ struct WindowPattern {
     stone_count: u8,
 }
 
+struct TacticalSummary {
+    pressure_score: i32,
+    immediate_threats: Vec<WindowPattern>,
+}
+
 impl WindowPattern {
     fn new() -> Self {
         Self {
@@ -298,26 +303,25 @@ fn score_pair_with_probe(
     let score = if probe.winner() == Some(player) {
         WIN_SCORE - 1
     } else {
-        let self_windows = player_windows(probe, player);
-        let self_immediates = collect_immediate_threats_from_windows(&self_windows);
-        let opponent_windows = player_windows(probe, player.other());
-        let opponent_immediates = collect_immediate_threats_from_windows(&opponent_windows);
-        let self_cover = min_cover_size(&self_immediates);
+        let self_summary = tactical_summary(probe, player);
+        let opponent_summary = tactical_summary(probe, player.other());
+        let self_cover = min_cover_size(&self_summary.immediate_threats);
 
         let mut score = 3 * evaluate_position(probe, player)
-            + window_pressure_score(&self_windows)
-            - window_pressure_score(&opponent_windows);
+            + self_summary.pressure_score
+            - opponent_summary.pressure_score;
 
         score += pair_alignment_bonus(pair, player, game);
-        score += self_immediates.len() as i32 * IMMEDIATE_THREAT_BONUS;
+        score += self_summary.immediate_threats.len() as i32 * IMMEDIATE_THREAT_BONUS;
         if self_cover > 2 {
             score += FORCED_WIN_BONUS;
         } else if self_cover == 2 {
             score += IMMEDIATE_THREAT_BONUS / 2;
         }
 
-        if !opponent_immediates.is_empty() {
-            score -= OPP_IMMEDIATE_WIN_PENALTY + opponent_immediates.len() as i32 * 20_000;
+        if !opponent_summary.immediate_threats.is_empty() {
+            score -= OPP_IMMEDIATE_WIN_PENALTY
+                + opponent_summary.immediate_threats.len() as i32 * 20_000;
         }
 
         score
@@ -328,29 +332,27 @@ fn score_pair_with_probe(
 }
 
 fn static_eval(game: &Game, root_player: Player) -> i32 {
-    let root_windows = player_windows(game, root_player);
-    let opp_windows = player_windows(game, root_player.other());
-    let root_immediates = collect_immediate_threats_from_windows(&root_windows);
-    let opp_immediates = collect_immediate_threats_from_windows(&opp_windows);
+    let root_summary = tactical_summary(game, root_player);
+    let opp_summary = tactical_summary(game, root_player.other());
 
     let mut score = 4 * evaluate_position(game, root_player)
-        + window_pressure_score(&root_windows)
-        - window_pressure_score(&opp_windows)
+        + root_summary.pressure_score
+        - opp_summary.pressure_score
         + cluster_score(game, root_player)
         - cluster_score(game, root_player.other());
 
     if game.current_player() == root_player {
-        if !root_immediates.is_empty() {
+        if !root_summary.immediate_threats.is_empty() {
             score += FORCED_WIN_BONUS / 2;
         }
-        if !opp_immediates.is_empty() {
+        if !opp_summary.immediate_threats.is_empty() {
             score -= OPP_IMMEDIATE_WIN_PENALTY / 2;
         }
     } else {
-        if !opp_immediates.is_empty() {
+        if !opp_summary.immediate_threats.is_empty() {
             score -= OPP_IMMEDIATE_WIN_PENALTY;
         }
-        let cover = min_cover_size(&root_immediates);
+        let cover = min_cover_size(&root_summary.immediate_threats);
         if cover > 2 {
             score += FORCED_WIN_BONUS;
         } else if cover == 2 {
@@ -408,8 +410,56 @@ fn collect_immediate_threats_from_windows(windows: &[WindowPattern]) -> Vec<Wind
         .collect()
 }
 
+fn tactical_summary(game: &Game, player: Player) -> TacticalSummary {
+    let occupied = game.stones().collect::<FxHashMap<_, _>>();
+    let seen_capacity = occupied.len() * POSITIVE_DIRS.len() * WINDOW_LENGTH as usize;
+    let mut seen = FxHashSet::with_capacity_and_hasher(seen_capacity, Default::default());
+    let mut pressure_score = 0;
+    let mut immediate_threats = Vec::with_capacity(occupied.len() / 2 + 1);
+
+    for (&coord, _) in &occupied {
+        for (axis_idx, dir) in POSITIVE_DIRS.iter().copied().enumerate() {
+            let rev = negate(dir);
+            for back in 0..WINDOW_LENGTH {
+                let start = offset(coord, scale(rev, back));
+                if !seen.insert((axis_idx, start)) {
+                    continue;
+                }
+
+                let mut blocked = false;
+                let mut pattern = WindowPattern::new();
+                for step in 0..WINDOW_LENGTH {
+                    let cell = offset(start, scale(dir, step));
+                    match occupied.get(&cell) {
+                        Some(owner) if *owner == player => pattern.stone_count += 1,
+                        Some(_) => {
+                            blocked = true;
+                            break;
+                        }
+                        None => pattern.push_empty(cell),
+                    }
+                }
+
+                if blocked || pattern.stone_count == 0 {
+                    continue;
+                }
+
+                pressure_score += window_pressure_for_pattern(pattern);
+                if pattern.stone_count >= 4 && pattern.empties_len <= 2 {
+                    immediate_threats.push(pattern);
+                }
+            }
+        }
+    }
+
+    TacticalSummary {
+        pressure_score,
+        immediate_threats,
+    }
+}
+
 fn immediate_threats(game: &Game, player: Player) -> Vec<WindowPattern> {
-    collect_immediate_threats_from_windows(&player_windows(game, player))
+    tactical_summary(game, player).immediate_threats
 }
 
 fn min_cover_size(threats: &[WindowPattern]) -> usize {
@@ -467,19 +517,22 @@ fn filter_pairs_covering_threats(
 fn window_pressure_score(windows: &[WindowPattern]) -> i32 {
     windows
         .iter()
-        .map(|window| {
-            let base = match window.stone_count {
-                0 => 0,
-                1 => 3,
-                2 => 12,
-                3 => 50,
-                4 => 240,
-                5 => 1_600,
-                _ => 0,
-            };
-            base + if window.empties_len <= 2 { 80 } else { 0 }
-        })
+        .copied()
+        .map(window_pressure_for_pattern)
         .sum()
+}
+
+fn window_pressure_for_pattern(window: WindowPattern) -> i32 {
+    let base = match window.stone_count {
+        0 => 0,
+        1 => 3,
+        2 => 12,
+        3 => 50,
+        4 => 240,
+        5 => 1_600,
+        _ => 0,
+    };
+    base + if window.empties_len <= 2 { 80 } else { 0 }
 }
 
 fn window_cell_bonus(stone_count: i32) -> i32 {
