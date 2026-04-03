@@ -1,4 +1,4 @@
-import type { BotName, ClockSettings, SessionRef } from "../domain/types.js";
+import type { BotName, ClockSettings, ClockState, SessionRef } from "../domain/types.js";
 
 export const SESSION_KEY = "six-tac-session";
 export const LOCAL_GAME_KEY = "six-tac-local-game";
@@ -7,13 +7,20 @@ export const SETTINGS_KEY = "six-tac-settings";
 export const POLL_INTERVAL_MS = 1200;
 
 export type LobbySettings = {
+  localTimerMs: number | null;
   privateClock: ClockSettings | null;
   botClock: ClockSettings | null;
   botName: BotName;
   matchmakingClock: ClockSettings | null;
 };
 
+export type LocalGameSave = {
+  gameJson: string;
+  clock: ClockState | null;
+};
+
 const DEFAULT_SETTINGS: LobbySettings = {
+  localTimerMs: null,
   privateClock: null,
   botClock: null,
   botName: "sprout",
@@ -28,10 +35,12 @@ export function loadSettings(): LobbySettings {
       privateClockTurnMs?: number | null;
       botClockTurnMs?: number | null;
       matchmakingClockTurnMs?: number | null;
+      localMoveTimerMs?: number | null;
     };
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
+      localTimerMs: parsed.localTimerMs ?? parsed.localMoveTimerMs ?? null,
       privateClock: parsed.privateClock ?? (parsed.privateClockTurnMs ? { initialMs: parsed.privateClockTurnMs, incrementMs: 0 } : null),
       botClock: parsed.botClock ?? (parsed.botClockTurnMs ? { initialMs: parsed.botClockTurnMs, incrementMs: 0 } : null),
       matchmakingClock: parsed.matchmakingClock ?? (parsed.matchmakingClockTurnMs ? { initialMs: parsed.matchmakingClockTurnMs, incrementMs: 0 } : null),
@@ -65,17 +74,36 @@ export function saveSession(session: SessionRef | null): void {
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
 
-export function loadLocalGame(): string | null {
+export function loadLocalGame(): LocalGameSave | null {
   const raw = localStorage.getItem(LOCAL_GAME_KEY);
-  return raw && raw.trim() ? raw : null;
+  if (!raw || !raw.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<LocalGameSave>;
+    if (typeof parsed.gameJson === "string") {
+      return {
+        gameJson: parsed.gameJson,
+        clock: parsed.clock ?? null,
+      };
+    }
+  } catch {
+    // fall back to the legacy raw turn-list string format
+  }
+
+  return {
+    gameJson: raw,
+    clock: null,
+  };
 }
 
-export function saveLocalGame(gameJson: string | null): void {
-  if (!gameJson) {
+export function saveLocalGame(localGame: LocalGameSave | null): void {
+  if (!localGame) {
     localStorage.removeItem(LOCAL_GAME_KEY);
     return;
   }
-  localStorage.setItem(LOCAL_GAME_KEY, gameJson);
+  localStorage.setItem(LOCAL_GAME_KEY, JSON.stringify(localGame));
 }
 
 export function ensurePlayerId(): string {

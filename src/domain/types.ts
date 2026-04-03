@@ -4,7 +4,7 @@ export type Player = "One" | "Two";
 export type SessionMode = "local" | "private" | "bot" | "matchmade";
 export type SessionStatus = "waiting" | "active" | "finished" | "abandoned";
 export type FinishReason = "win" | "timeout" | "abandoned" | null;
-export type BotName = "sprout" | "seal";
+export type BotName = "sprout" | "seal" | "ambrosia";
 
 export type Cube = {
   x: number;
@@ -32,7 +32,7 @@ export type ClockSettings = {
 
 export type ClockState = {
   enabled: boolean;
-  type: "chess";
+  type: "chess" | "move";
   initialMs: number;
   incrementMs: number;
   activeSeat: HumanSeat | null;

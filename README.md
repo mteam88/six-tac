@@ -13,13 +13,13 @@ Credit to [@webgoatguy](https://www.youtube.com/@webgoatguy) on Youtube: [https:
 
 ## Features
 
-- Local play mode
+- Local play mode with an optional configurable per-move timer
 - Fully offline local games after the app has been loaded once
 - Create a room
 - Join with a 6 digit code
-- Play against Rust/WASM bots (`sprout`, `seal`)
+- Play against Rust/WASM bots (`sprout`, `seal`, `ambrosia`)
 - Anonymous matchmaking
-- Configurable chess clocks for online games
+- Fully configurable chess clocks for online games
 - No usernames or accounts
 - Two-player turn handling
 - Infinite hex canvas with pan

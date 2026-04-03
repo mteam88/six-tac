@@ -53,20 +53,6 @@ export function submitSessionTurn(ref: SessionRef, stones: Cube[]): Promise<Sess
   });
 }
 
-export function startLocalSession(): Promise<SessionView> {
-  return requestJson<SessionView>("/api/v1/local/start", {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-}
-
-export function submitLocalTurn(gameJson: string, stones: Cube[]): Promise<SessionView> {
-  return requestJson<SessionView>("/api/v1/local/move", {
-    method: "POST",
-    body: JSON.stringify({ gameJson, stones }),
-  });
-}
-
 export function queueMatchmaking(playerId: string, clock: ClockSettings | null): Promise<MatchmakingStatus> {
   return requestJson<MatchmakingStatus>("/api/v1/matchmaking/queue", {
     method: "POST",

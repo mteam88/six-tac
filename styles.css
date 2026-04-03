@@ -84,14 +84,13 @@ h1 {
   margin-top: 18px;
 }
 
-.join-row,
-.action-row {
+.join-row {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 10px;
 }
 
-.action-main {
+.button-wide {
   width: 100%;
 }
 
@@ -112,6 +111,12 @@ select {
   padding: 0 14px;
   border-radius: 12px;
   outline: none;
+}
+
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  accent-color: #60a5fa;
 }
 
 input {
@@ -142,16 +147,6 @@ input::placeholder {
 .button-primary {
   border-color: rgba(191, 219, 254, 0.22);
   background: rgba(59, 130, 246, 0.16);
-}
-
-.button-ghost {
-  background: rgba(15, 23, 42, 0.72);
-}
-
-.button-square {
-  width: 42px;
-  min-width: 42px;
-  padding: 0;
 }
 
 .button-small {
@@ -214,8 +209,23 @@ input::placeholder {
   color: var(--muted);
 }
 
-.settings-field span {
+.settings-field span,
+.settings-toggle span {
   color: var(--text);
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.settings-toggle input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
 }
 
 .settings-hint {

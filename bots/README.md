@@ -10,5 +10,6 @@ Separate Rust/WASM bot crate for Six Tac.
   - instant-win detection
   - threat-window filtering
   - alpha-beta search over two-stone turns
+- `ambrosia`: feature-weighted heuristic bot inspired by trueharuu's Ambrosia project, translated into new logic for this engine's full-turn API
 
 The bot crate is intentionally separate from `engine/`, while reusing the core engine as a library.

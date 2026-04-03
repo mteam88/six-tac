@@ -14,34 +14,25 @@
         <h1>Six Tac</h1>
 
         <div class="actions-stack">
-          <button id="local-mode-button" class="button button-icon">
+          <button id="local-mode-button" class="button button-icon button-wide">
             <span class="button-glyph">◉</span>
             <span>Local</span>
           </button>
 
-          <div class="action-row">
-            <button id="create-room-button" class="button button-primary button-icon action-main">
-              <span class="button-glyph">＋</span>
-              <span>Create room</span>
-            </button>
-            <button id="create-room-settings-button" class="button button-ghost button-square" aria-label="Room settings">⚙</button>
-          </div>
+          <button id="create-room-button" class="button button-primary button-icon button-wide">
+            <span class="button-glyph">＋</span>
+            <span>Create room</span>
+          </button>
 
-          <div class="action-row">
-            <button id="play-bot-button" class="button button-icon action-main">
-              <span class="button-glyph">✦</span>
-              <span>Play bot</span>
-            </button>
-            <button id="play-bot-settings-button" class="button button-ghost button-square" aria-label="Bot settings">⚙</button>
-          </div>
+          <button id="play-bot-button" class="button button-icon button-wide">
+            <span class="button-glyph">✦</span>
+            <span>Play bot</span>
+          </button>
 
-          <div class="action-row">
-            <button id="find-match-button" class="button button-icon action-main">
-              <span class="button-glyph">◎</span>
-              <span>Find match</span>
-            </button>
-            <button id="find-match-settings-button" class="button button-ghost button-square" aria-label="Matchmaking settings">⚙</button>
-          </div>
+          <button id="find-match-button" class="button button-icon button-wide">
+            <span class="button-glyph">◎</span>
+            <span>Find match</span>
+          </button>
 
           <div class="join-row">
             <input id="join-code-input" inputmode="numeric" maxlength="6" placeholder="123456" aria-label="Room code" />
@@ -87,9 +78,17 @@
       <div class="card settings-card">
         <h2 id="settings-title">Settings</h2>
         <div class="settings-stack">
-          <label class="settings-field">
-            <span>Turn clock</span>
-            <select id="settings-clock-select"></select>
+          <label class="settings-toggle">
+            <input id="settings-clock-enabled" type="checkbox" />
+            <span id="settings-clock-enabled-label">Enable timer</span>
+          </label>
+          <label id="settings-base-seconds-row" class="settings-field">
+            <span id="settings-base-seconds-label">Base time (seconds)</span>
+            <input id="settings-base-seconds-input" type="number" min="1" step="1" inputmode="numeric" />
+          </label>
+          <label id="settings-increment-row" class="settings-field">
+            <span>Increment per turn (seconds)</span>
+            <input id="settings-increment-input" type="number" min="0" step="1" inputmode="numeric" />
           </label>
           <label id="settings-bot-row" class="settings-field hidden">
             <span>Bot</span>
