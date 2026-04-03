@@ -13,3 +13,39 @@ Separate Rust/WASM bot crate for Six Tac.
 - `ambrosia`: feature-weighted heuristic bot inspired by trueharuu's Ambrosia project, translated into new logic for this engine's full-turn API
 
 The bot crate is intentionally separate from `engine/`, while reusing the core engine as a library.
+
+## Native harness
+
+Use the native Rust harness to develop and evaluate new bots without going through wasm:
+
+```bash
+cargo run --manifest-path bots/Cargo.toml --bin harness -- match ambrosia seal --games 1000
+```
+
+Highlights:
+
+- runs directly against the native Rust engine and bot implementations
+- parallelizes independent games across CPU cores
+- randomly assigns which bot gets the first move in each game
+- reports per-seat win/loss splits, average game length, and throughput
+- includes ELO mode for quick round-robin benchmarking across bots
+- includes compare mode with confidence intervals and early stopping for head-to-head checks
+- human-readable runs print incremental progress while matches are running
+
+List available bots:
+
+```bash
+cargo run --manifest-path bots/Cargo.toml --bin harness -- list
+```
+
+Run ELO for all bots:
+
+```bash
+cargo run --manifest-path bots/Cargo.toml --bin harness -- elo all --games 200
+```
+
+Run a head-to-head comparison with confidence bounds:
+
+```bash
+cargo run --manifest-path bots/Cargo.toml --bin harness -- compare ambrosia seal --games 1000 --batch-size 100 --min-games 200
+```

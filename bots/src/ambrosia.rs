@@ -105,7 +105,15 @@ fn double_threat_count(game: &Game, player: Player) -> i32 {
                 if !seen.insert(candidate) || game.stone_at(candidate).is_some() {
                     continue;
                 }
-                if POSITIVE_DIRS.iter().copied().filter(|axis| virtual_line_length(game, candidate, *axis, player) >= WINDOW_LENGTH - 1).count() >= 2 {
+                if POSITIVE_DIRS
+                    .iter()
+                    .copied()
+                    .filter(|axis| {
+                        virtual_line_length(game, candidate, *axis, player) >= WINDOW_LENGTH - 1
+                    })
+                    .count()
+                    >= 2
+                {
                     count += 1;
                 }
             }
@@ -120,7 +128,10 @@ fn gap_threat_count(game: &Game, player: Player) -> i32 {
         for dir in POSITIVE_DIRS {
             let gap = offset(stone, dir);
             let far = offset(gap, dir);
-            if game.stone_at(gap).is_none() && game.stone_at(far) == Some(player) && virtual_line_length(game, gap, dir, player) >= WINDOW_LENGTH - 1 {
+            if game.stone_at(gap).is_none()
+                && game.stone_at(far) == Some(player)
+                && virtual_line_length(game, gap, dir, player) >= WINDOW_LENGTH - 1
+            {
                 count += 1;
             }
         }
@@ -163,12 +174,19 @@ fn isolated_piece_count(game: &Game, player: Player) -> i32 {
     let stones = game.stones_for(player).collect::<FxHashSet<_>>();
     stones
         .iter()
-        .filter(|&&stone| !directions().iter().copied().any(|dir| stones.contains(&offset(stone, dir)) || stones.contains(&offset(stone, scale(dir, 2)))))
+        .filter(|&&stone| {
+            !directions().iter().copied().any(|dir| {
+                stones.contains(&offset(stone, dir))
+                    || stones.contains(&offset(stone, scale(dir, 2)))
+            })
+        })
         .count() as i32
 }
 
 fn center_proximity_score(game: &Game, player: Player) -> f64 {
-    game.stones_for(player).map(|stone| 1.0 / (1.0 + stone.distance(Cube::ORIGIN) as f64)).sum()
+    game.stones_for(player)
+        .map(|stone| 1.0 / (1.0 + stone.distance(Cube::ORIGIN) as f64))
+        .sum()
 }
 
 fn run_length(game: &Game, start: Cube, delta: Cube, player: Player) -> i32 {
@@ -183,15 +201,29 @@ fn run_length(game: &Game, start: Cube, delta: Cube, player: Player) -> i32 {
 
 fn count_open_ends(game: &Game, start: Cube, delta: Cube, player: Player) -> i32 {
     let backward = negate(delta);
-    let front = offset(start, scale(delta, run_length(game, start, delta, player) + 1));
-    let back = offset(start, scale(backward, run_length(game, start, backward, player) + 1));
+    let front = offset(
+        start,
+        scale(delta, run_length(game, start, delta, player) + 1),
+    );
+    let back = offset(
+        start,
+        scale(backward, run_length(game, start, backward, player) + 1),
+    );
     i32::from(game.stone_at(front).is_none()) + i32::from(game.stone_at(back).is_none())
 }
 
 fn virtual_line_length(game: &Game, candidate: Cube, axis: Cube, player: Player) -> i32 {
-    1 + run_length(game, candidate, axis, player) + run_length(game, candidate, negate(axis), player)
+    1 + run_length(game, candidate, axis, player)
+        + run_length(game, candidate, negate(axis), player)
 }
 
 fn directions() -> [Cube; 6] {
-    [POSITIVE_DIRS[0], POSITIVE_DIRS[1], POSITIVE_DIRS[2], negate(POSITIVE_DIRS[0]), negate(POSITIVE_DIRS[1]), negate(POSITIVE_DIRS[2])]
+    [
+        POSITIVE_DIRS[0],
+        POSITIVE_DIRS[1],
+        POSITIVE_DIRS[2],
+        negate(POSITIVE_DIRS[0]),
+        negate(POSITIVE_DIRS[1]),
+        negate(POSITIVE_DIRS[2]),
+    ]
 }

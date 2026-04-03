@@ -1,6 +1,11 @@
 use hex_tic_tac_engine::{Cube, Game, Player};
+#[cfg(target_arch = "wasm32")]
 use js_sys::Math;
 use rustc_hash::{FxHashMap, FxHashSet};
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::Cell;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const POSITIVE_DIRS: [Cube; 3] = [cube(1, -1, 0), cube(1, 0, -1), cube(0, 1, -1)];
 pub(crate) const WINDOW_LENGTH: i32 = 6;
@@ -18,6 +23,24 @@ pub(crate) struct ScoredCandidate {
     pub(crate) score: i32,
 }
 
+pub(crate) trait IndexRng {
+    fn index(&mut self, length: usize) -> usize;
+}
+
+pub(crate) struct RuntimeRng;
+
+impl RuntimeRng {
+    pub(crate) const fn new() -> Self {
+        Self
+    }
+}
+
+impl IndexRng for RuntimeRng {
+    fn index(&mut self, length: usize) -> usize {
+        random_index(length)
+    }
+}
+
 pub(crate) const fn cube(x: i32, y: i32, z: i32) -> Cube {
     match Cube::new(x, y, z) {
         Some(value) => value,
@@ -26,12 +49,24 @@ pub(crate) const fn cube(x: i32, y: i32, z: i32) -> Cube {
 }
 
 pub(crate) fn choose_random_legal_move(game: &Game) -> Result<[Cube; 2], String> {
-    let candidates = collect_frontier_candidates(game, FALLBACK_RADIUS);
-    let legal_pairs = legal_pairs_from_candidates(game, &candidates);
+    let mut rng = RuntimeRng::new();
+    choose_random_legal_move_with_rng(game, &mut rng)
+}
+
+pub(crate) fn choose_random_legal_move_with_rng<R: IndexRng>(
+    game: &Game,
+    rng: &mut R,
+) -> Result<[Cube; 2], String> {
+    let mut candidates = collect_frontier_candidates(game, FRONTIER_RADIUS);
+    let mut legal_pairs = legal_pairs_from_candidates(game, &candidates);
+    if legal_pairs.is_empty() {
+        candidates = collect_frontier_candidates(game, FALLBACK_RADIUS);
+        legal_pairs = legal_pairs_from_candidates(game, &candidates);
+    }
     if legal_pairs.is_empty() {
         return Err("sprout could not find a legal move".to_string());
     }
-    Ok(legal_pairs[random_index(legal_pairs.len())])
+    Ok(legal_pairs[rng.index(legal_pairs.len())])
 }
 
 pub(crate) fn ranked_pairs(game: &Game, player: Player, candidate_cap: usize) -> Vec<[Cube; 2]> {
@@ -50,7 +85,10 @@ pub(crate) fn ranked_pairs(game: &Game, player: Player, candidate_cap: usize) ->
         }
     }
 
-    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+    pairs.sort_unstable_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| pair_key(a.0).cmp(&pair_key(b.0)))
+    });
     pairs.into_iter().map(|entry| entry.0).collect()
 }
 
@@ -69,7 +107,11 @@ pub(crate) fn rank_candidates(
             score: score_candidate_cell(coord, &own, &opp),
         })
         .collect::<Vec<_>>();
-    scored.sort_by(|a, b| b.score.cmp(&a.score));
+    scored.sort_unstable_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| cube_key(a.coord).cmp(&cube_key(b.coord)))
+    });
     scored.truncate(candidate_cap.max(2));
     scored
 }
@@ -103,7 +145,10 @@ pub(crate) fn find_immediate_win(game: &Game, pairs: &[[Cube; 2]]) -> Option<[Cu
 }
 
 pub(crate) fn collect_frontier_candidates(game: &Game, radius: i32) -> Vec<Cube> {
-    let occupied = game.stones().map(|(cube, _)| cube).collect::<FxHashSet<_>>();
+    let occupied = game
+        .stones()
+        .map(|(cube, _)| cube)
+        .collect::<FxHashSet<_>>();
     let mut candidates = FxHashSet::default();
 
     for (stone, _) in game.stones() {
@@ -136,7 +181,9 @@ pub(crate) fn collect_frontier_candidates(game: &Game, radius: i32) -> Vec<Cube>
         }
     }
 
-    candidates.into_iter().collect()
+    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+    candidates.sort_unstable_by_key(|coord| cube_key(*coord));
+    candidates
 }
 
 pub(crate) fn evaluate_position(game: &Game, root_player: Player) -> i32 {
@@ -265,8 +312,20 @@ fn count_direction(stones: &FxHashSet<Cube>, start: Cube, delta: Cube) -> i32 {
     count
 }
 
+fn cube_key(coord: Cube) -> (i32, i32, i32) {
+    (coord.x(), coord.y(), coord.z())
+}
+
+fn pair_key(pair: [Cube; 2]) -> ((i32, i32, i32), (i32, i32, i32)) {
+    (cube_key(pair[0]), cube_key(pair[1]))
+}
+
 pub(crate) fn offset(base: Cube, delta: Cube) -> Cube {
-    cube(base.x() + delta.x(), base.y() + delta.y(), base.z() + delta.z())
+    cube(
+        base.x() + delta.x(),
+        base.y() + delta.y(),
+        base.z() + delta.z(),
+    )
 }
 
 pub(crate) fn scale(delta: Cube, factor: i32) -> Cube {
@@ -278,5 +337,37 @@ pub(crate) fn negate(delta: Cube) -> Cube {
 }
 
 fn random_index(length: usize) -> usize {
-    (Math::floor(Math::random() * length as f64) as usize).min(length.saturating_sub(1))
+    debug_assert!(length > 0);
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        (Math::floor(Math::random() * length as f64) as usize).min(length.saturating_sub(1))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        thread_local! {
+            static RNG_STATE: Cell<u64> = Cell::new(seed_state());
+        }
+
+        RNG_STATE.with(|state| {
+            let mut value = state.get();
+            if value == 0 {
+                value = 0xA076_1D64_78BD_642F;
+            }
+            value ^= value >> 12;
+            value ^= value << 25;
+            value ^= value >> 27;
+            state.set(value);
+            (value.wrapping_mul(0x2545_F491_4F6C_DD1D) % length as u64) as usize
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn seed_state() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64 ^ duration.as_secs())
+        .unwrap_or(0x9E37_79B9_7F4A_7C15)
 }

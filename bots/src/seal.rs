@@ -1,9 +1,9 @@
 use hex_tic_tac_engine::{Cube, Game, Player};
 
 use crate::shared::{
-    choose_random_legal_move, collect_threat_windows, evaluate_position,
-    filter_pairs_by_threats, find_immediate_win, ranked_pairs, INNER_CANDIDATE_CAP,
-    ROOT_CANDIDATE_CAP, SEARCH_DEPTH, WIN_SCORE,
+    choose_random_legal_move, collect_threat_windows, evaluate_position, filter_pairs_by_threats,
+    find_immediate_win, ranked_pairs, INNER_CANDIDATE_CAP, ROOT_CANDIDATE_CAP, SEARCH_DEPTH,
+    WIN_SCORE,
 };
 
 pub(crate) fn choose_seal_move(game: &Game) -> Result<[Cube; 2], String> {
@@ -32,7 +32,13 @@ pub(crate) fn choose_seal_move(game: &Game) -> Result<[Cube; 2], String> {
         if probe.play(pair).is_err() {
             continue;
         }
-        let score = minimax(&mut probe, SEARCH_DEPTH.saturating_sub(1), alpha, beta, player);
+        let score = minimax(
+            &mut probe,
+            SEARCH_DEPTH.saturating_sub(1),
+            alpha,
+            beta,
+            player,
+        );
         probe.undo();
         if score > best_score {
             best_score = score;
@@ -44,9 +50,19 @@ pub(crate) fn choose_seal_move(game: &Game) -> Result<[Cube; 2], String> {
     Ok(best_pair)
 }
 
-fn minimax(game: &mut Game, depth: usize, mut alpha: i32, mut beta: i32, root_player: Player) -> i32 {
+fn minimax(
+    game: &mut Game,
+    depth: usize,
+    mut alpha: i32,
+    mut beta: i32,
+    root_player: Player,
+) -> i32 {
     if let Some(winner) = game.winner() {
-        return if winner == root_player { WIN_SCORE } else { -WIN_SCORE };
+        return if winner == root_player {
+            WIN_SCORE
+        } else {
+            -WIN_SCORE
+        };
     }
     if depth == 0 {
         return evaluate_position(game, root_player);
