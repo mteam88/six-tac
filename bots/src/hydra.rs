@@ -402,14 +402,6 @@ fn player_windows(game: &Game, player: Player) -> Vec<WindowPattern> {
     windows
 }
 
-fn collect_immediate_threats_from_windows(windows: &[WindowPattern]) -> Vec<WindowPattern> {
-    windows
-        .iter()
-        .copied()
-        .filter(|window| window.stone_count >= 4 && window.empties_len <= 2)
-        .collect()
-}
-
 fn tactical_summary(game: &Game, player: Player) -> TacticalSummary {
     let occupied = game.stones().collect::<FxHashMap<_, _>>();
     let seen_capacity = occupied.len() * POSITIVE_DIRS.len() * WINDOW_LENGTH as usize;
@@ -512,14 +504,6 @@ fn filter_pairs_covering_threats(
                 .all(|threat| threat.contains_either(pair[0], pair[1]))
         })
         .collect()
-}
-
-fn window_pressure_score(windows: &[WindowPattern]) -> i32 {
-    windows
-        .iter()
-        .copied()
-        .map(window_pressure_for_pattern)
-        .sum()
 }
 
 fn window_pressure_for_pattern(window: WindowPattern) -> i32 {
