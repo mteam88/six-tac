@@ -296,7 +296,17 @@ impl AggregateMatch {
 }
 
 pub fn run_match(config: MatchConfig) -> Result<MatchSummary, String> {
-    run_match_with_progress(config, |_| {})
+    validate_match_config(config)?;
+
+    let started = Instant::now();
+    let mut summary = run_match_batch(config, 0, config.games)?;
+    summary.elapsed_ms = started.elapsed().as_millis();
+    summary.games_per_second = if summary.elapsed_ms == 0 {
+        summary.total_games as f64
+    } else {
+        summary.total_games as f64 / (summary.elapsed_ms as f64 / 1_000.0)
+    };
+    Ok(summary)
 }
 
 pub fn run_match_with_progress<F>(
@@ -498,32 +508,39 @@ fn run_match_batch(
     start_game_index: usize,
     games: usize,
 ) -> Result<MatchSummary, String> {
-    let runs = (0..games)
+    let aggregate = (0..games)
         .into_par_iter()
+        .with_min_len(16)
         .map(|index| run_single_game(config, start_game_index + index))
-        .collect::<Vec<_>>();
+        .try_fold(
+            || AggregateMatch::new(config.first, config.second),
+            |mut aggregate, run| {
+                let run = run?;
+                aggregate.total_games += 1;
+                aggregate.total_turns += run.stats.turns;
+                apply_result_to_aggregate(&mut aggregate, run);
+                Ok::<_, String>(aggregate)
+            },
+        )
+        .try_reduce(
+            || AggregateMatch::new(config.first, config.second),
+            |mut left, right| {
+                merge_aggregate_match(&mut left, right);
+                Ok::<_, String>(left)
+            },
+        )?;
 
-    let mut summary = MatchSummary {
+    Ok(MatchSummary {
         config,
-        first: BotRecord::new(config.first),
-        second: BotRecord::new(config.second),
-        total_games: games,
-        finished_games: 0,
-        unfinished_games: 0,
-        average_turns: 0.0,
+        first: aggregate.candidate,
+        second: aggregate.baseline,
+        total_games: aggregate.total_games,
+        finished_games: aggregate.finished_games,
+        unfinished_games: aggregate.unfinished_games,
+        average_turns: aggregate.total_turns as f64 / aggregate.total_games as f64,
         elapsed_ms: 0,
         games_per_second: 0.0,
-    };
-    let mut total_turns = 0usize;
-
-    for run in runs {
-        let run = run?;
-        total_turns += run.stats.turns;
-        apply_result(&mut summary, run);
-    }
-
-    summary.average_turns = total_turns as f64 / games as f64;
-    Ok(summary)
+    })
 }
 
 fn finalize_match_summary(
@@ -672,16 +689,16 @@ fn run_single_game(config: MatchConfig, game_index: usize) -> Result<GameRun, St
     Ok(GameRun { first_seat, stats })
 }
 
-fn apply_result(summary: &mut MatchSummary, run: GameRun) {
+fn apply_result_to_aggregate(aggregate: &mut AggregateMatch, run: GameRun) {
     let second_seat = run.first_seat.other();
-    let first_bot = summary.first.bot;
-    let second_bot = summary.second.bot;
+    let first_bot = aggregate.candidate.bot;
+    let second_bot = aggregate.baseline.bot;
 
     match run.stats.outcome {
         GameOutcome::Win { winner } => {
-            summary.finished_games += 1;
+            aggregate.finished_games += 1;
             record_seat_game(
-                &mut summary.first,
+                &mut aggregate.candidate,
                 run.first_seat,
                 if winner == first_bot {
                     SeatOutcome::Win
@@ -690,7 +707,7 @@ fn apply_result(summary: &mut MatchSummary, run: GameRun) {
                 },
             );
             record_seat_game(
-                &mut summary.second,
+                &mut aggregate.baseline,
                 second_seat,
                 if winner == second_bot {
                     SeatOutcome::Win
@@ -700,9 +717,9 @@ fn apply_result(summary: &mut MatchSummary, run: GameRun) {
             );
         }
         GameOutcome::TurnLimit => {
-            summary.unfinished_games += 1;
-            record_seat_game(&mut summary.first, run.first_seat, SeatOutcome::Unfinished);
-            record_seat_game(&mut summary.second, second_seat, SeatOutcome::Unfinished);
+            aggregate.unfinished_games += 1;
+            record_seat_game(&mut aggregate.candidate, run.first_seat, SeatOutcome::Unfinished);
+            record_seat_game(&mut aggregate.baseline, second_seat, SeatOutcome::Unfinished);
         }
     }
 }
@@ -741,6 +758,15 @@ fn merge_match_summary(aggregate: &mut AggregateMatch, summary: &MatchSummary) {
     aggregate.total_turns += (summary.average_turns * summary.total_games as f64).round() as usize;
     merge_bot_record(&mut aggregate.candidate, summary.first);
     merge_bot_record(&mut aggregate.baseline, summary.second);
+}
+
+fn merge_aggregate_match(target: &mut AggregateMatch, source: AggregateMatch) {
+    target.total_games += source.total_games;
+    target.finished_games += source.finished_games;
+    target.unfinished_games += source.unfinished_games;
+    target.total_turns += source.total_turns;
+    merge_bot_record(&mut target.candidate, source.candidate);
+    merge_bot_record(&mut target.baseline, source.baseline);
 }
 
 fn merge_bot_record(target: &mut BotRecord, source: BotRecord) {

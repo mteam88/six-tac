@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const POSITIVE_DIRS: [Cube; 3] = [cube(1, -1, 0), cube(1, 0, -1), cube(0, 1, -1)];
 pub(crate) const WINDOW_LENGTH: i32 = 6;
+const WINDOW_LENGTH_USIZE: usize = WINDOW_LENGTH as usize;
 pub(crate) const FRONTIER_RADIUS: i32 = 2;
 pub(crate) const FALLBACK_RADIUS: i32 = 8;
 pub(crate) const ROOT_CANDIDATE_CAP: usize = 12;
@@ -21,6 +22,36 @@ pub(crate) const WINDOW_SCORES: [i32; 7] = [0, 2, 10, 48, 220, 1_200, WIN_SCORE 
 pub(crate) struct ScoredCandidate {
     pub(crate) coord: Cube,
     pub(crate) score: i32,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ThreatWindow {
+    empties: [Cube; WINDOW_LENGTH_USIZE],
+    len: u8,
+}
+
+impl ThreatWindow {
+    fn new() -> Self {
+        Self {
+            empties: [Cube::ORIGIN; WINDOW_LENGTH_USIZE],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, coord: Cube) {
+        self.empties[self.len as usize] = coord;
+        self.len += 1;
+    }
+
+    fn contains_either(&self, first: Cube, second: Cube) -> bool {
+        self.empties[..self.len as usize]
+            .iter()
+            .any(|&coord| coord == first || coord == second)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 pub(crate) trait IndexRng {
@@ -79,9 +110,7 @@ pub(crate) fn ranked_pairs(game: &Game, player: Player, candidate_cap: usize) ->
     for first in 0..candidates.len() {
         for second in (first + 1)..candidates.len() {
             let pair = [candidates[first].coord, candidates[second].coord];
-            if game.is_legal(pair) {
-                pairs.push((pair, candidates[first].score + candidates[second].score));
-            }
+            pairs.push((pair, candidates[first].score + candidates[second].score));
         }
     }
 
@@ -100,7 +129,7 @@ pub(crate) fn rank_candidates(
 ) -> Vec<ScoredCandidate> {
     let own = game.stones_for(player).collect::<FxHashSet<_>>();
     let opp = game.stones_for(player.other()).collect::<FxHashSet<_>>();
-    let mut scored = collect_frontier_candidates(game, radius)
+    let mut scored = collect_frontier_candidates_unsorted(game, radius)
         .into_iter()
         .map(|coord| ScoredCandidate {
             coord,
@@ -116,14 +145,12 @@ pub(crate) fn rank_candidates(
     scored
 }
 
-pub(crate) fn legal_pairs_from_candidates(game: &Game, candidates: &[Cube]) -> Vec<[Cube; 2]> {
+pub(crate) fn legal_pairs_from_candidates(_game: &Game, candidates: &[Cube]) -> Vec<[Cube; 2]> {
     let mut pairs = Vec::new();
     for first in 0..candidates.len() {
         for second in (first + 1)..candidates.len() {
             let pair = [candidates[first], candidates[second]];
-            if game.is_legal(pair) {
-                pairs.push(pair);
-            }
+            pairs.push(pair);
         }
     }
     pairs
@@ -145,6 +172,12 @@ pub(crate) fn find_immediate_win(game: &Game, pairs: &[[Cube; 2]]) -> Option<[Cu
 }
 
 pub(crate) fn collect_frontier_candidates(game: &Game, radius: i32) -> Vec<Cube> {
+    let mut candidates = collect_frontier_candidates_unsorted(game, radius);
+    candidates.sort_unstable_by_key(|coord| cube_key(*coord));
+    candidates
+}
+
+fn collect_frontier_candidates_unsorted(game: &Game, radius: i32) -> Vec<Cube> {
     let occupied = game
         .stones()
         .map(|(cube, _)| cube)
@@ -181,14 +214,13 @@ pub(crate) fn collect_frontier_candidates(game: &Game, radius: i32) -> Vec<Cube>
         }
     }
 
-    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
-    candidates.sort_unstable_by_key(|coord| cube_key(*coord));
-    candidates
+    candidates.into_iter().collect()
 }
 
 pub(crate) fn evaluate_position(game: &Game, root_player: Player) -> i32 {
     let occupied = game.stones().collect::<FxHashMap<_, _>>();
-    let mut seen = FxHashSet::default();
+    let seen_capacity = occupied.len() * POSITIVE_DIRS.len() * WINDOW_LENGTH_USIZE;
+    let mut seen = FxHashSet::with_capacity_and_hasher(seen_capacity, Default::default());
     let mut score = 0;
 
     for (&coord, _) in &occupied {
@@ -223,10 +255,11 @@ pub(crate) fn evaluate_position(game: &Game, root_player: Player) -> i32 {
     score
 }
 
-pub(crate) fn collect_threat_windows(game: &Game, player: Player) -> Vec<FxHashSet<Cube>> {
+pub(crate) fn collect_threat_windows(game: &Game, player: Player) -> Vec<ThreatWindow> {
     let occupied = game.stones().collect::<FxHashMap<_, _>>();
-    let mut seen = FxHashSet::default();
-    let mut windows = Vec::new();
+    let seen_capacity = occupied.len() * POSITIVE_DIRS.len() * WINDOW_LENGTH_USIZE;
+    let mut seen = FxHashSet::with_capacity_and_hasher(seen_capacity, Default::default());
+    let mut windows = Vec::with_capacity(occupied.len());
 
     for (&coord, _) in &occupied {
         for (axis_idx, dir) in POSITIVE_DIRS.iter().copied().enumerate() {
@@ -239,15 +272,13 @@ pub(crate) fn collect_threat_windows(game: &Game, player: Player) -> Vec<FxHashS
 
                 let mut player_count = 0usize;
                 let mut opponent_count = 0usize;
-                let mut empties = FxHashSet::default();
+                let mut empties = ThreatWindow::new();
                 for step in 0..WINDOW_LENGTH {
                     let cell = offset(start, scale(dir, step));
                     match occupied.get(&cell) {
                         Some(owner) if *owner == player => player_count += 1,
                         Some(_) => opponent_count += 1,
-                        None => {
-                            empties.insert(cell);
-                        }
+                        None => empties.push(cell),
                     }
                 }
 
@@ -263,7 +294,7 @@ pub(crate) fn collect_threat_windows(game: &Game, player: Player) -> Vec<FxHashS
 
 pub(crate) fn filter_pairs_by_threats(
     pairs: &[[Cube; 2]],
-    threat_windows: &[FxHashSet<Cube>],
+    threat_windows: &[ThreatWindow],
 ) -> Vec<[Cube; 2]> {
     if threat_windows.is_empty() {
         return pairs.to_vec();
@@ -275,7 +306,7 @@ pub(crate) fn filter_pairs_by_threats(
         .filter(|pair| {
             threat_windows
                 .iter()
-                .all(|window| window.contains(&pair[0]) || window.contains(&pair[1]))
+                .all(|window| window.contains_either(pair[0], pair[1]))
         })
         .collect()
 }
@@ -370,4 +401,39 @@ fn seed_state() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64 ^ duration.as_secs())
         .unwrap_or(0x9E37_79B9_7F4A_7C15)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_game() -> Game {
+        let mut game = Game::new();
+        game.play([Cube::from_axial(1, 0), Cube::from_axial(2, 0)])
+            .unwrap();
+        game.play([Cube::from_axial(0, 1), Cube::from_axial(0, 2)])
+            .unwrap();
+        game
+    }
+
+    #[test]
+    fn frontier_candidate_pairs_are_legal() {
+        let game = sample_game();
+        let candidates = collect_frontier_candidates(&game, FALLBACK_RADIUS);
+        let pairs = legal_pairs_from_candidates(&game, &candidates);
+        assert!(!pairs.is_empty());
+        assert!(pairs.iter().copied().all(|pair| game.is_legal(pair)));
+    }
+
+    #[test]
+    fn ranked_pairs_are_legal() {
+        let game = sample_game();
+        let candidates = rank_candidates(&game, game.current_player(), FALLBACK_RADIUS, 18)
+            .into_iter()
+            .map(|candidate| candidate.coord)
+            .collect::<Vec<_>>();
+        let pairs = legal_pairs_from_candidates(&game, &candidates);
+        assert!(!pairs.is_empty());
+        assert!(pairs.iter().copied().all(|pair| game.is_legal(pair)));
+    }
 }
