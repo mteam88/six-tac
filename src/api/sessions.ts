@@ -2,7 +2,7 @@ import { startClock } from "../domain/clock";
 import { createSession, createToken, generateCode } from "../domain/session-state";
 import type { BotName, ClockSettings, JoinSessionResponse, SessionData } from "../domain/types";
 import type { Env } from "../env";
-import { json, readJson, sessionStub } from "./utils";
+import { forwardedHeaders, json, readJson, sessionStub } from "./utils";
 
 async function initSession(env: Env, session: SessionData): Promise<Response> {
   return sessionStub(env, session.id).fetch("https://session/internal/init", {
@@ -123,9 +123,9 @@ export async function handleJoinSession(request: Request, env: Env): Promise<Res
 
   return sessionStub(env, code).fetch("https://session/join", {
     method: "POST",
-    headers: {
+    headers: forwardedHeaders(request, {
       "Content-Type": "application/json",
-    },
+    }),
     body: JSON.stringify({
       token: body.token ?? null,
       playerId: body.playerId ?? null,
@@ -136,7 +136,9 @@ export async function handleJoinSession(request: Request, env: Env): Promise<Res
 export async function handleSessionState(request: Request, env: Env, sessionId: string): Promise<Response> {
   const url = new URL("https://session/state");
   url.search = new URL(request.url).search;
-  return sessionStub(env, sessionId).fetch(url.toString());
+  return sessionStub(env, sessionId).fetch(new Request(url.toString(), {
+    headers: forwardedHeaders(request),
+  }));
 }
 
 export async function handleSessionMove(request: Request, env: Env, sessionId: string): Promise<Response> {

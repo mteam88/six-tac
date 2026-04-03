@@ -1,9 +1,28 @@
 import { DurableObject } from "cloudflare:workers";
+import { json, readJson, clientAddress } from "../api/utils";
 import { startClock } from "../domain/clock";
 import { createSession, createToken } from "../domain/session-state";
 import type { ClockSettings, MatchmakingStatus, SessionData, SessionRef, SessionView } from "../domain/types";
 import type { Env } from "../env";
-import { json, readJson } from "../api/utils";
+import { FixedWindowRateLimiter, rateLimitKey } from "./rate-limit";
+
+const MATCHMAKING_QUEUE_LIMIT = {
+  limit: 12,
+  windowMs: 60_000,
+  retryAfterSeconds: 30,
+};
+
+const MATCHMAKING_STATUS_LIMIT = {
+  limit: 240,
+  windowMs: 60_000,
+  retryAfterSeconds: 15,
+};
+
+const MATCHMAKING_CANCEL_LIMIT = {
+  limit: 30,
+  windowMs: 60_000,
+  retryAfterSeconds: 15,
+};
 
 type QueueEntry = {
   playerId: string;
@@ -13,11 +32,21 @@ type QueueEntry = {
 
 type StoredMatch = SessionRef;
 
+function tooManyRequests(retryAfterSeconds: number): Response {
+  return json(
+    { error: "Too many requests. Please slow down." },
+    429,
+    { "Retry-After": String(retryAfterSeconds) },
+  );
+}
+
 function sessionStub(env: Env, sessionId: string): DurableObjectStub {
   return env.SESSIONS.get(env.SESSIONS.idFromName(sessionId));
 }
 
 export class MatchmakerObject extends DurableObject<Env> {
+  private readonly rateLimiter = new FixedWindowRateLimiter();
+
   private async loadQueue(): Promise<QueueEntry[]> {
     return (await this.ctx.storage.get<QueueEntry[]>("queue")) ?? [];
   }
@@ -32,6 +61,13 @@ export class MatchmakerObject extends DurableObject<Env> {
 
   private async saveMatches(matches: Record<string, StoredMatch>): Promise<void> {
     await this.ctx.storage.put("matches", matches);
+  }
+
+  private takeRateLimit(key: string, limit: { limit: number; windowMs: number; retryAfterSeconds: number }): Response | null {
+    if (this.rateLimiter.consume(key, limit.limit, limit.windowMs)) {
+      return null;
+    }
+    return tooManyRequests(limit.retryAfterSeconds);
   }
 
   private async createMatchedSession(first: QueueEntry, second: QueueEntry): Promise<Record<string, StoredMatch>> {
@@ -114,6 +150,14 @@ export class MatchmakerObject extends DurableObject<Env> {
           return json({ error: "Missing player id" }, 400);
         }
 
+        const limited = this.takeRateLimit(
+          rateLimitKey("queue", clientAddress(request), playerId),
+          MATCHMAKING_QUEUE_LIMIT,
+        );
+        if (limited) {
+          return limited;
+        }
+
         const existingMatch = matches[playerId];
         if (existingMatch) {
           return json(await this.buildMatchedStatus(existingMatch));
@@ -166,6 +210,14 @@ export class MatchmakerObject extends DurableObject<Env> {
           return json({ error: "Missing player id" }, 400);
         }
 
+        const limited = this.takeRateLimit(
+          rateLimitKey("status", clientAddress(request), playerId),
+          MATCHMAKING_STATUS_LIMIT,
+        );
+        if (limited) {
+          return limited;
+        }
+
         const match = matches[playerId];
         if (match) {
           return json(await this.buildMatchedStatus(match));
@@ -188,6 +240,14 @@ export class MatchmakerObject extends DurableObject<Env> {
         const playerId = String(body.playerId || "").trim();
         if (!playerId) {
           return json({ error: "Missing player id" }, 400);
+        }
+
+        const limited = this.takeRateLimit(
+          rateLimitKey("cancel", clientAddress(request), playerId),
+          MATCHMAKING_CANCEL_LIMIT,
+        );
+        if (limited) {
+          return limited;
         }
 
         const nextQueue = queue.filter((entry) => entry.playerId !== playerId);

@@ -13,7 +13,7 @@ Credit to [@webgoatguy](https://www.youtube.com/@webgoatguy) on Youtube: [https:
 
 ## Features
 
-- Local play mode with an optional configurable per-move timer
+- Local play mode with the same configurable chess clock system used by online games
 - Fully offline local games after the app has been loaded once
 - Create a room
 - Join with a 6 digit code

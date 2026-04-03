@@ -2,9 +2,8 @@ import type { ClockState, Cube, SessionView } from "../domain/types.js";
 import type { Player } from "./app-types.js";
 
 export const TAP_SLOP = 8;
-export const DEFAULT_LOCAL_TIMER_SECONDS = 30;
-export const DEFAULT_CHESS_BASE_SECONDS = 180;
-export const DEFAULT_CHESS_INCREMENT_SECONDS = 0;
+export const DEFAULT_CLOCK_BASE_SECONDS = 180;
+export const DEFAULT_CLOCK_INCREMENT_SECONDS = 2;
 
 export function sameCube(a: Cube | null, b: Cube | null): boolean {
   return Boolean(a && b && a.x === b.x && a.y === b.y && a.z === b.z);

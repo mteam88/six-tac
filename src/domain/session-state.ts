@@ -138,6 +138,7 @@ export function buildSessionView(
     gameJson: snapshot.turns_json,
     clock: session.clock ? cloneClock(session.clock) : null,
     serverNow: now,
+    version: session.updatedAt,
   };
 }
 
@@ -160,6 +161,7 @@ export function buildLocalSessionView(snapshot: EngineSnapshot, now = Date.now()
     gameJson: snapshot.turns_json,
     clock: null,
     serverNow: now,
+    version: now,
   };
 }
 

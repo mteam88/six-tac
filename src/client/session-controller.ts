@@ -151,7 +151,7 @@ export function createSessionController(options: {
     if (!state.sessionRef) return;
     state.pollTimer = window.setInterval(() => {
       if (!state.sessionRef || shouldPauseNetworkSync()) return;
-      loadSessionState(state.sessionRef).then(applySession).catch((error) => {
+      loadSessionState(state.sessionRef, state.session?.mode === "local" ? null : state.session).then(applySession).catch((error) => {
         if (!shouldPauseNetworkSync()) elements.turnPill.textContent = error instanceof Error ? error.message : "Connection lost";
       });
     }, POLL_INTERVAL_MS);
@@ -206,7 +206,7 @@ export function createSessionController(options: {
   const resumeNetworkFlows = async (): Promise<void> => {
     if (state.sessionRef) {
       try {
-        applySession(await loadSessionState(state.sessionRef));
+        applySession(await loadSessionState(state.sessionRef, state.session?.mode === "local" ? null : state.session));
       } catch {
         // keep saved session for retry
       }
@@ -240,7 +240,7 @@ export function createSessionController(options: {
         saveLocalGame(null);
       }
     }
-    applySession(createFreshLocalSession(localBindings, state.settings.localTimerMs));
+    applySession(createFreshLocalSession(localBindings, state.settings.localClock));
   };
 
   const createPrivateRoomFlow = async (): Promise<void> => {

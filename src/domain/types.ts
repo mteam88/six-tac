@@ -32,7 +32,7 @@ export type ClockSettings = {
 
 export type ClockState = {
   enabled: boolean;
-  type: "chess" | "move";
+  type: "chess";
   initialMs: number;
   incrementMs: number;
   activeSeat: HumanSeat | null;
@@ -90,7 +90,17 @@ export type SessionView = {
   gameJson: string;
   clock: ClockState | null;
   serverNow: number;
+  version: number;
 };
+
+export type SessionSyncUnchanged = {
+  unchanged: true;
+  seat: Seat;
+  serverNow: number;
+  version: number;
+};
+
+export type SessionSyncResponse = SessionView | SessionSyncUnchanged;
 
 export type SessionRef = {
   id: string;

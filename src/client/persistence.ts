@@ -7,7 +7,7 @@ export const SETTINGS_KEY = "six-tac-settings";
 export const POLL_INTERVAL_MS = 1200;
 
 export type LobbySettings = {
-  localTimerMs: number | null;
+  localClock: ClockSettings | null;
   privateClock: ClockSettings | null;
   botClock: ClockSettings | null;
   botName: BotName;
@@ -20,7 +20,7 @@ export type LocalGameSave = {
 };
 
 const DEFAULT_SETTINGS: LobbySettings = {
-  localTimerMs: null,
+  localClock: null,
   privateClock: null,
   botClock: null,
   botName: "sprout",
@@ -36,11 +36,16 @@ export function loadSettings(): LobbySettings {
       botClockTurnMs?: number | null;
       matchmakingClockTurnMs?: number | null;
       localMoveTimerMs?: number | null;
+      localTimerMs?: number | null;
     };
+    const legacyLocalInitialMs = parsed.localClock?.initialMs
+      ?? parsed.localTimerMs
+      ?? parsed.localMoveTimerMs
+      ?? null;
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
-      localTimerMs: parsed.localTimerMs ?? parsed.localMoveTimerMs ?? null,
+      localClock: parsed.localClock ?? (legacyLocalInitialMs ? { initialMs: legacyLocalInitialMs, incrementMs: 0 } : null),
       privateClock: parsed.privateClock ?? (parsed.privateClockTurnMs ? { initialMs: parsed.privateClockTurnMs, incrementMs: 0 } : null),
       botClock: parsed.botClock ?? (parsed.botClockTurnMs ? { initialMs: parsed.botClockTurnMs, incrementMs: 0 } : null),
       matchmakingClock: parsed.matchmakingClock ?? (parsed.matchmakingClockTurnMs ? { initialMs: parsed.matchmakingClockTurnMs, incrementMs: 0 } : null),

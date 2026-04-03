@@ -1,5 +1,5 @@
 import { EMPTY_GAME_JSON } from "../domain/types.js";
-import type { ClockState, Cube, EngineSnapshot, SessionView } from "../domain/types.js";
+import type { ClockSettings, ClockState, Cube, EngineSnapshot, SessionView } from "../domain/types.js";
 import type { LocalBindings, Player } from "./app-types.js";
 import { cloneClock, playerSeat } from "./helpers.js";
 
@@ -15,29 +15,33 @@ function buildLastTurn(snapshot: EngineSnapshot): { lastTurnPlayer: Player | nul
   };
 }
 
-export function createLocalMoveClock(initialMs: number, now: number): ClockState {
+function createLocalClock(clock: ClockSettings, now: number): ClockState {
   return {
     enabled: true,
-    type: "move",
-    initialMs,
-    incrementMs: 0,
+    type: "chess",
+    initialMs: clock.initialMs,
+    incrementMs: clock.incrementMs,
     activeSeat: "two",
     turnStartedAt: now,
-    remainingMs: { one: initialMs, two: initialMs },
+    remainingMs: {
+      one: clock.initialMs,
+      two: clock.initialMs,
+    },
     flaggedSeat: null,
   };
 }
 
-export function normalizeLocalClock(snapshot: EngineSnapshot, savedClock: ClockState | null, now: number): ClockState | null {
-  if (!savedClock?.enabled) return null;
+function normalizeLocalClock(snapshot: EngineSnapshot, savedClock: ClockState | null): ClockState | null {
+  if (!savedClock?.enabled) {
+    return null;
+  }
+
   const clock = cloneClock(savedClock);
-  if (!clock) return null;
+  if (!clock) {
+    return null;
+  }
 
-  clock.type = "move";
-  clock.incrementMs = 0;
-  clock.remainingMs.one = clock.initialMs;
-  clock.remainingMs.two = clock.initialMs;
-
+  clock.type = "chess";
   if (snapshot.winner) {
     clock.activeSeat = null;
     clock.turnStartedAt = null;
@@ -46,9 +50,9 @@ export function normalizeLocalClock(snapshot: EngineSnapshot, savedClock: ClockS
   }
 
   const expectedSeat = playerSeat(snapshot.current_player);
-  if (clock.activeSeat !== expectedSeat || clock.turnStartedAt === null) {
+  if (!clock.activeSeat || clock.activeSeat !== expectedSeat) {
     clock.activeSeat = expectedSeat;
-    clock.turnStartedAt = now;
+    clock.turnStartedAt ??= Date.now();
   }
   return clock;
 }
@@ -72,6 +76,7 @@ export function buildLocalSession(snapshot: EngineSnapshot, clock: ClockState | 
     gameJson: snapshot.turns_json,
     clock,
     serverNow: now,
+    version: now,
   };
 }
 
@@ -86,25 +91,36 @@ export function callLocalPlay(localBindings: LocalBindings, gameJson: string, st
 export function buildLocalState(localBindings: LocalBindings, gameJson: string, savedClock: ClockState | null): SessionView {
   const now = Date.now();
   const snapshot = callLocalSnapshot(localBindings, gameJson);
-  return buildLocalSession(snapshot, normalizeLocalClock(snapshot, savedClock, now), now);
+  return buildLocalSession(snapshot, normalizeLocalClock(snapshot, savedClock), now);
 }
 
-export function createFreshLocalSession(localBindings: LocalBindings, timerMs: number | null): SessionView {
+export function createFreshLocalSession(localBindings: LocalBindings, clock: ClockSettings | null): SessionView {
   const now = Date.now();
   const snapshot = callLocalSnapshot(localBindings, EMPTY_GAME_JSON);
-  const clock = timerMs ? createLocalMoveClock(timerMs, now) : null;
-  return buildLocalSession(snapshot, clock, now);
+  return buildLocalSession(snapshot, clock ? createLocalClock(clock, now) : null, now);
 }
 
-export function finishLocalTimerIfExpired(session: SessionView | null): boolean {
-  if (!session || session.mode !== "local") return false;
-  const clock = session.clock;
-  if (!clock?.enabled || clock.type !== "move" || session.winner || !clock.activeSeat || clock.turnStartedAt === null) {
+function currentRemainingMs(clock: ClockState, seat: "one" | "two", now: number): number {
+  if (clock.activeSeat !== seat || clock.turnStartedAt === null) {
+    return clock.remainingMs[seat];
+  }
+  return Math.max(0, clock.remainingMs[seat] - (now - clock.turnStartedAt));
+}
+
+export function finishLocalClockIfExpired(session: SessionView | null, now = Date.now()): boolean {
+  if (!session || session.mode !== "local") {
     return false;
   }
 
-  const remaining = clock.initialMs - (Date.now() - clock.turnStartedAt);
-  if (remaining > 0) return false;
+  const clock = session.clock;
+  if (!clock?.enabled || !clock.activeSeat || clock.turnStartedAt === null || session.winner) {
+    return false;
+  }
+
+  const remaining = currentRemainingMs(clock, clock.activeSeat, now);
+  if (remaining > 0) {
+    return false;
+  }
 
   clock.remainingMs[clock.activeSeat] = 0;
   clock.flaggedSeat = clock.activeSeat;
@@ -114,13 +130,23 @@ export function finishLocalTimerIfExpired(session: SessionView | null): boolean 
   session.resultReason = "timeout";
   session.winner = clock.flaggedSeat === "one" ? "Two" : "One";
   session.yourTurn = false;
+  session.serverNow = now;
+  session.version = now;
   return true;
 }
 
 export function advanceLocalClock(clock: ClockState | null, nextPlayer: Player, gameWon: boolean, now: number): ClockState | null {
-  if (!clock?.enabled || clock.type !== "move") return null;
+  if (!clock?.enabled || !clock.activeSeat) {
+    return null;
+  }
+
   const nextClock = cloneClock(clock);
-  if (!nextClock) return null;
+  if (!nextClock?.activeSeat) {
+    return null;
+  }
+
+  const movingSeat = nextClock.activeSeat;
+  nextClock.remainingMs[movingSeat] = currentRemainingMs(nextClock, movingSeat, now);
   if (gameWon) {
     nextClock.activeSeat = null;
     nextClock.turnStartedAt = null;
@@ -128,10 +154,9 @@ export function advanceLocalClock(clock: ClockState | null, nextPlayer: Player, 
     return nextClock;
   }
 
+  nextClock.remainingMs[movingSeat] += nextClock.incrementMs;
   nextClock.activeSeat = playerSeat(nextPlayer);
   nextClock.turnStartedAt = now;
   nextClock.flaggedSeat = null;
-  nextClock.remainingMs.one = nextClock.initialMs;
-  nextClock.remainingMs.two = nextClock.initialMs;
   return nextClock;
 }

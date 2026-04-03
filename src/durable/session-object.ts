@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { json, readJson, clientAddress } from "../api/utils";
 import { chooseBotMove } from "../bots";
 import { completeMove, expireSessionOnClock, getDeadlineAt, startClock } from "../domain/clock";
 import {
@@ -13,7 +14,23 @@ import {
 import type { Cube, EngineSnapshot, HumanSeat, SessionData, Seat } from "../domain/types";
 import type { Env } from "../env";
 import { play_json, snapshot_json } from "../engine";
-import { json, readJson } from "../api/utils";
+import { FixedWindowRateLimiter, rateLimitKey } from "./rate-limit";
+
+const SESSION_STATE_LIMIT = {
+  limit: 240,
+  windowMs: 60_000,
+  retryAfterSeconds: 15,
+};
+
+const SESSION_JOIN_LIMIT = {
+  limit: 15,
+  windowMs: 60_000,
+  retryAfterSeconds: 30,
+};
+
+type StoredSessionData = SessionData & {
+  snapshot: EngineSnapshot;
+};
 
 function callSnapshot(gameJson: string): EngineSnapshot {
   return JSON.parse(snapshot_json(gameJson)) as EngineSnapshot;
@@ -26,6 +43,14 @@ function callPlay(gameJson: string, stones: Cube[]): EngineSnapshot {
   return JSON.parse(play_json(gameJson, JSON.stringify(stones))) as EngineSnapshot;
 }
 
+function tooManyRequests(retryAfterSeconds: number): Response {
+  return json(
+    { error: "Too many requests. Please slow down." },
+    429,
+    { "Retry-After": String(retryAfterSeconds) },
+  );
+}
+
 type LegacyRoomData = {
   code: string;
   turnsJson: string;
@@ -36,10 +61,21 @@ type LegacyRoomData = {
 };
 
 export class SessionObject extends DurableObject<Env> {
-  private async loadSession(): Promise<SessionData | null> {
-    const session = await this.ctx.storage.get<SessionData>("session");
-    if (session) {
-      return session;
+  private readonly rateLimiter = new FixedWindowRateLimiter();
+
+  private async loadSession(): Promise<StoredSessionData | null> {
+    const stored = await this.ctx.storage.get<StoredSessionData | SessionData>("session");
+    if (stored) {
+      if ("snapshot" in stored && stored.snapshot) {
+        return stored as StoredSessionData;
+      }
+
+      const migrated = {
+        ...stored,
+        snapshot: callSnapshot(stored.turnsJson),
+      } satisfies StoredSessionData;
+      await this.ctx.storage.put("session", migrated);
+      return migrated;
     }
 
     const legacyRoom = await this.ctx.storage.get<LegacyRoomData>("room");
@@ -49,7 +85,7 @@ export class SessionObject extends DurableObject<Env> {
 
     const snapshot = callSnapshot(legacyRoom.turnsJson);
     const now = Date.now();
-    const migrated: SessionData = {
+    const migrated: StoredSessionData = {
       id: legacyRoom.code,
       code: legacyRoom.code,
       type: "private",
@@ -71,18 +107,19 @@ export class SessionObject extends DurableObject<Env> {
       ],
       clock: null,
       result: snapshot.winner ? { winner: snapshot.winner, reason: "win" } : null,
+      snapshot,
     };
 
     await this.ctx.storage.put("session", migrated);
     return migrated;
   }
 
-  private async saveSession(session: SessionData): Promise<void> {
+  private async saveSession(session: StoredSessionData): Promise<void> {
     await this.ctx.storage.put("session", session);
     await this.syncAlarm(session);
   }
 
-  private async syncAlarm(session: SessionData): Promise<void> {
+  private async syncAlarm(session: StoredSessionData): Promise<void> {
     const deadline = getDeadlineAt(session.clock);
     if (!deadline || session.status !== "active" || session.result) {
       await this.ctx.storage.deleteAlarm();
@@ -91,7 +128,7 @@ export class SessionObject extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(deadline);
   }
 
-  private ensureActiveClock(session: SessionData, snapshot: EngineSnapshot, now: number): void {
+  private ensureActiveClock(session: StoredSessionData, snapshot: EngineSnapshot, now: number): void {
     if (!session.clock?.enabled || session.result || session.status !== "active") {
       return;
     }
@@ -102,30 +139,39 @@ export class SessionObject extends DurableObject<Env> {
     startClock(session.clock, seat, now);
   }
 
-  private async maybeExpireSession(session: SessionData, snapshot: EngineSnapshot): Promise<EngineSnapshot> {
+  private async maybeExpireSession(session: StoredSessionData): Promise<void> {
     const now = Date.now();
     if (expireSessionOnClock(session, now)) {
       session.updatedAt = now;
       await this.saveSession(session);
     }
-    return snapshot;
   }
 
-  private async snapshotForView(session: SessionData, token: string | null): Promise<{ seat: Seat; view: ReturnType<typeof buildSessionView> }> {
-    const snapshot = callSnapshot(session.turnsJson);
-    await this.maybeExpireSession(session, snapshot);
-    const nextSnapshot = callSnapshot(session.turnsJson);
+  private async snapshotForView(session: StoredSessionData, token: string | null): Promise<{ seat: Seat; view: ReturnType<typeof buildSessionView> }> {
+    await this.maybeExpireSession(session);
     const seat = getSeatForToken(session, token);
     return {
       seat,
-      view: buildSessionView(session, nextSnapshot, seat),
+      view: buildSessionView(session, session.snapshot, seat),
     };
   }
 
-  private async runBotTurns(session: SessionData): Promise<void> {
+  private takeRateLimit(key: string, limit: { limit: number; windowMs: number; retryAfterSeconds: number }): Response | null {
+    if (this.rateLimiter.consume(key, limit.limit, limit.windowMs)) {
+      return null;
+    }
+    return tooManyRequests(limit.retryAfterSeconds);
+  }
+
+  private async runBotTurns(session: StoredSessionData): Promise<void> {
     while (session.status === "active" && !session.result) {
-      const snapshot = callSnapshot(session.turnsJson);
-      applySnapshotResult(session, snapshot, Date.now());
+      const snapshot = session.snapshot;
+      const now = Date.now();
+      if (applySnapshotResult(session, snapshot, now)) {
+        session.updatedAt = now;
+        await this.saveSession(session);
+        break;
+      }
       if (session.result || session.status !== "active") {
         break;
       }
@@ -133,15 +179,15 @@ export class SessionObject extends DurableObject<Env> {
       const currentSeat: HumanSeat = snapshot.current_player === "One" ? "one" : "two";
       const participant = participantForSeat(session, currentSeat);
       if (!participant || participant.kind !== "bot" || !participant.botConfig) {
-        this.ensureActiveClock(session, snapshot, Date.now());
+        this.ensureActiveClock(session, snapshot, now);
         break;
       }
 
-      const now = Date.now();
       this.ensureActiveClock(session, snapshot, now);
       const stones = chooseBotMove(participant.botConfig.name, session.turnsJson);
       const nextSnapshot = callPlay(session.turnsJson, stones);
       session.turnsJson = nextSnapshot.turns_json;
+      session.snapshot = nextSnapshot;
       session.updatedAt = now;
       if (!applySnapshotResult(session, nextSnapshot, now)) {
         const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
@@ -163,9 +209,13 @@ export class SessionObject extends DurableObject<Env> {
 
         const session = await readJson<SessionData>(request);
         const snapshot = callSnapshot(session.turnsJson);
-        this.ensureActiveClock(session, snapshot, Date.now());
-        await this.saveSession(session);
-        await this.runBotTurns(session);
+        const storedSession: StoredSessionData = {
+          ...session,
+          snapshot,
+        };
+        this.ensureActiveClock(storedSession, snapshot, Date.now());
+        await this.saveSession(storedSession);
+        await this.runBotTurns(storedSession);
         return json({ ok: true }, 201);
       }
 
@@ -177,6 +227,14 @@ export class SessionObject extends DurableObject<Env> {
 
       if (request.method === "POST" && url.pathname === "/join") {
         const body = await readJson<{ token?: string | null; playerId?: string | null }>(request);
+        const limited = this.takeRateLimit(
+          rateLimitKey("join", clientAddress(request), body.token ?? body.playerId ?? "guest"),
+          SESSION_JOIN_LIMIT,
+        );
+        if (limited) {
+          return limited;
+        }
+
         const incomingToken = body.token ?? null;
         const existingSeat = getSeatForToken(session, incomingToken);
         if (existingSeat !== "spectator" && incomingToken) {
@@ -206,7 +264,7 @@ export class SessionObject extends DurableObject<Env> {
           });
           if (isSessionReady(session) && session.status === "waiting") {
             session.status = "active";
-            this.ensureActiveClock(session, callSnapshot(session.turnsJson), Date.now());
+            this.ensureActiveClock(session, session.snapshot, Date.now());
           }
           session.updatedAt = Date.now();
           await this.saveSession(session);
@@ -220,8 +278,28 @@ export class SessionObject extends DurableObject<Env> {
 
       if (request.method === "GET" && url.pathname === "/state") {
         const token = url.searchParams.get("token");
-        const { view } = await this.snapshotForView(session, token);
-        return json(view);
+        const limited = this.takeRateLimit(
+          rateLimitKey("state", clientAddress(request), token ?? "spectator"),
+          SESSION_STATE_LIMIT,
+        );
+        if (limited) {
+          return limited;
+        }
+
+        await this.maybeExpireSession(session);
+        const seat = getSeatForToken(session, token);
+        const knownVersion = Number(url.searchParams.get("version") || "");
+        const knownSeat = url.searchParams.get("seat");
+        if (Number.isFinite(knownVersion) && knownVersion === session.updatedAt && knownSeat === seat) {
+          return json({
+            unchanged: true,
+            seat,
+            serverNow: Date.now(),
+            version: session.updatedAt,
+          });
+        }
+
+        return json(buildSessionView(session, session.snapshot, seat));
       }
 
       if (request.method === "POST" && url.pathname === "/move") {
@@ -234,9 +312,10 @@ export class SessionObject extends DurableObject<Env> {
         }
 
         const now = Date.now();
-        const snapshot = callSnapshot(session.turnsJson);
+        const snapshot = session.snapshot;
         this.ensureActiveClock(session, snapshot, now);
         if (expireSessionOnClock(session, now)) {
+          session.updatedAt = now;
           await this.saveSession(session);
           return json({ error: "Time has already expired for this turn" }, 400);
         }
@@ -255,6 +334,7 @@ export class SessionObject extends DurableObject<Env> {
 
         const nextSnapshot = callPlay(session.turnsJson, body.stones);
         session.turnsJson = nextSnapshot.turns_json;
+        session.snapshot = nextSnapshot;
         session.updatedAt = now;
         if (!applySnapshotResult(session, nextSnapshot, now)) {
           const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
@@ -277,12 +357,12 @@ export class SessionObject extends DurableObject<Env> {
     if (!session) {
       return;
     }
-    const snapshot = callSnapshot(session.turnsJson);
     if (expireSessionOnClock(session, Date.now())) {
+      session.updatedAt = Date.now();
       await this.saveSession(session);
       return;
     }
-    this.ensureActiveClock(session, snapshot, Date.now());
+    this.ensureActiveClock(session, session.snapshot, Date.now());
     await this.saveSession(session);
   }
 }

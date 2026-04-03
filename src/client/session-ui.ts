@@ -1,7 +1,7 @@
 import type { AppState } from "./app-types.js";
 import type { AppElements } from "./dom.js";
 import { formatClock, formatRoomCode } from "./helpers.js";
-import { finishLocalTimerIfExpired } from "./local-game.js";
+import { finishLocalClockIfExpired } from "./local-game.js";
 
 export function currentSessionLabel(session: AppState["session"]): string {
   if (!session) return "—";
@@ -15,21 +15,14 @@ export function currentClockTimes(state: AppState): { one: number; two: number }
   const clock = session?.clock;
   if (!session || !clock?.enabled) return { one: 0, two: 0 };
 
-  if (clock.type === "move") {
-    let one = clock.flaggedSeat === "one" ? 0 : clock.initialMs;
-    let two = clock.flaggedSeat === "two" ? 0 : clock.initialMs;
-    if (clock.activeSeat && clock.turnStartedAt !== null && !session.winner) {
-      const remaining = Math.max(0, clock.initialMs - (Date.now() - clock.turnStartedAt));
-      if (clock.activeSeat === "one") one = remaining;
-      else two = remaining;
-    }
-    return { one, two };
-  }
-
-  const now = Date.now() + state.serverClockOffsetMs;
+  const now = session.mode === "local" ? Date.now() : Date.now() + state.serverClockOffsetMs;
   return {
-    one: clock.activeSeat === "one" && clock.turnStartedAt !== null ? Math.max(0, clock.remainingMs.one - (now - clock.turnStartedAt)) : clock.remainingMs.one,
-    two: clock.activeSeat === "two" && clock.turnStartedAt !== null ? Math.max(0, clock.remainingMs.two - (now - clock.turnStartedAt)) : clock.remainingMs.two,
+    one: clock.activeSeat === "one" && clock.turnStartedAt !== null
+      ? Math.max(0, clock.remainingMs.one - (now - clock.turnStartedAt))
+      : clock.remainingMs.one,
+    two: clock.activeSeat === "two" && clock.turnStartedAt !== null
+      ? Math.max(0, clock.remainingMs.two - (now - clock.turnStartedAt))
+      : clock.remainingMs.two,
   };
 }
 
@@ -40,7 +33,7 @@ export function updateControls(state: AppState, elements: AppElements): boolean 
     return false;
   }
 
-  const timerExpired = finishLocalTimerIfExpired(session);
+  const timerExpired = finishLocalClockIfExpired(session);
   elements.bottomBar.classList.remove("hidden");
   elements.roomCodePill.textContent = currentSessionLabel(session);
   elements.copyRoomButton.classList.toggle("hidden", !session.code);

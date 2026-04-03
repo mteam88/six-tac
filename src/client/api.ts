@@ -1,4 +1,14 @@
-import type { BotName, ClockSettings, Cube, JoinSessionResponse, MatchmakingStatus, SessionRef, SessionView } from "../domain/types.js";
+import type {
+  BotName,
+  ClockSettings,
+  Cube,
+  JoinSessionResponse,
+  MatchmakingStatus,
+  SessionRef,
+  SessionSyncResponse,
+  SessionSyncUnchanged,
+  SessionView,
+} from "../domain/types.js";
 
 async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -40,10 +50,38 @@ export function joinPrivateSession(code: string, token: string | null, playerId:
   });
 }
 
-export function loadSessionState(ref: SessionRef): Promise<SessionView> {
-  return requestJson<SessionView>(
-    `/api/v1/sessions/${encodeURIComponent(ref.id)}/state?token=${encodeURIComponent(ref.token)}`,
+function isUnchangedSessionResponse(response: SessionSyncResponse): response is SessionSyncUnchanged {
+  return "unchanged" in response && response.unchanged;
+}
+
+export async function loadSessionState(ref: SessionRef, previousSession: SessionView | null = null): Promise<SessionView> {
+  const params = new URLSearchParams({
+    token: ref.token,
+  });
+
+  if (previousSession && previousSession.mode !== "local") {
+    params.set("version", String(previousSession.version));
+    params.set("seat", previousSession.seat);
+  }
+
+  const response = await requestJson<SessionSyncResponse>(
+    `/api/v1/sessions/${encodeURIComponent(ref.id)}/state?${params.toString()}`,
   );
+
+  if (previousSession && isUnchangedSessionResponse(response)) {
+    return {
+      ...previousSession,
+      seat: response.seat,
+      serverNow: response.serverNow,
+      version: response.version,
+    };
+  }
+
+  if (isUnchangedSessionResponse(response)) {
+    throw new Error("Missing previous session state");
+  }
+
+  return response;
 }
 
 export function submitSessionTurn(ref: SessionRef, stones: Cube[]): Promise<SessionView> {

@@ -42,7 +42,7 @@ function createState(): AppState {
 }
 
 function saveModeSettings(state: AppState, mode: SettingsMode, result: SettingsResult): void {
-  if (mode === "local") state.settings.localTimerMs = result.localTimerMs ?? null;
+  if (mode === "local") state.settings.localClock = result.clock ?? null;
   else if (mode === "private") state.settings.privateClock = result.clock ?? null;
   else if (mode === "bot") {
     state.settings.botClock = result.clock ?? null;

@@ -3,9 +3,8 @@ import type { SettingsMode } from "./app-types.js";
 import type { AppElements } from "./dom.js";
 import type { LobbySettings } from "./persistence.js";
 import {
-  DEFAULT_CHESS_BASE_SECONDS,
-  DEFAULT_CHESS_INCREMENT_SECONDS,
-  DEFAULT_LOCAL_TIMER_SECONDS,
+  DEFAULT_CLOCK_BASE_SECONDS,
+  DEFAULT_CLOCK_INCREMENT_SECONDS,
   msToSeconds,
   parseNonNegativeSeconds,
   parsePositiveSeconds,
@@ -18,7 +17,6 @@ export const BOT_OPTIONS: Array<{ value: BotName; label: string }> = [
 ];
 
 export type SettingsResult = {
-  localTimerMs?: number | null;
   clock?: ClockSettings | null;
   botName?: BotName;
 };
@@ -43,18 +41,24 @@ export class SettingsModal {
     settingsModal.classList.remove("hidden");
     settingsBotRow.classList.toggle("hidden", mode !== "bot");
 
+    const clock = mode === "local"
+      ? settings.localClock
+      : mode === "private"
+        ? settings.privateClock
+        : mode === "bot"
+          ? settings.botClock
+          : settings.matchmakingClock;
+    this.setClockFields(
+      Boolean(clock),
+      clock ? msToSeconds(clock.initialMs) : DEFAULT_CLOCK_BASE_SECONDS,
+      clock ? msToSeconds(clock.incrementMs) : DEFAULT_CLOCK_INCREMENT_SECONDS,
+    );
+
     if (mode === "local") {
       settingsTitle.textContent = "Local game";
-      settingsHint.textContent = "The move timer resets every turn. If time runs out, the other color wins.";
+      settingsHint.textContent = "Set a chess clock or play without one.";
       settingsSaveButton.textContent = "Start";
-      this.setClockFields(Boolean(settings.localTimerMs), settings.localTimerMs ? msToSeconds(settings.localTimerMs) : DEFAULT_LOCAL_TIMER_SECONDS, 0, true);
-      return;
-    }
-
-    const clock = mode === "private" ? settings.privateClock : mode === "bot" ? settings.botClock : settings.matchmakingClock;
-    this.setClockFields(Boolean(clock), clock ? msToSeconds(clock.initialMs) : DEFAULT_CHESS_BASE_SECONDS, clock ? msToSeconds(clock.incrementMs) : DEFAULT_CHESS_INCREMENT_SECONDS, false);
-
-    if (mode === "private") {
+    } else if (mode === "private") {
       settingsTitle.textContent = "Create room";
       settingsHint.textContent = "These settings apply to the room you create from this device.";
       settingsSaveButton.textContent = "Create";
@@ -71,9 +75,6 @@ export class SettingsModal {
   }
 
   read(mode: SettingsMode): SettingsResult {
-    if (mode === "local") {
-      return { localTimerMs: this.readLocalTimer() };
-    }
     const result: SettingsResult = { clock: this.readChessClock() };
     if (mode === "bot") {
       result.botName = this.elements.settingsBotSelect.value as BotName;
@@ -81,19 +82,13 @@ export class SettingsModal {
     return result;
   }
 
-  private setClockFields(enabled: boolean, baseSeconds: number, incrementSeconds: number, localMode: boolean): void {
+  private setClockFields(enabled: boolean, baseSeconds: number, incrementSeconds: number): void {
     this.elements.settingsClockEnabled.checked = enabled;
     this.elements.settingsBaseSecondsInput.value = String(baseSeconds);
     this.elements.settingsIncrementInput.value = String(incrementSeconds);
-    this.elements.settingsIncrementRow.classList.toggle("hidden", localMode);
-    this.elements.settingsBaseSecondsLabel.textContent = localMode ? "Move timer (seconds)" : "Base time (seconds)";
-    this.elements.settingsClockEnabledLabel.textContent = localMode ? "Enable move timer" : "Enable chess clock";
-  }
-
-  private readLocalTimer(): number | null {
-    return this.elements.settingsClockEnabled.checked
-      ? parsePositiveSeconds(this.elements.settingsBaseSecondsInput.value.trim(), "Move timer")
-      : null;
+    this.elements.settingsIncrementRow.classList.remove("hidden");
+    this.elements.settingsBaseSecondsLabel.textContent = "Base time (seconds)";
+    this.elements.settingsClockEnabledLabel.textContent = "Enable chess clock";
   }
 
   private readChessClock(): ClockSettings | null {
