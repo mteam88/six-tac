@@ -2,14 +2,14 @@
 
 Separate Rust/WASM bot crate for Six Tac.
 
+`seal` is built from the vendored `bots/vendor/SealBot` submodule:
+- native builds compile a small C ABI bridge directly against the upstream C++ engine
+- wasm builds require Emscripten (`em++`) and emit `bots/generated/sealbot.js` during `cargo build`
+
 ## Bots
 
 - `sprout`: random legal-move bot
-- `seal`: threat-aware minimax bot translated and adapted from ideas in Ramora0's HexTicTacToe project:
-  - candidate generation near the frontier
-  - instant-win detection
-  - threat-window filtering
-  - alpha-beta search over two-stone turns
+- `seal`: vendored SealBot backend from Ramora0/SealBot with a thin state translator from Six Tac's implied-opening turn model
 - `ambrosia`: feature-weighted heuristic bot inspired by trueharuu's Ambrosia project, translated into new logic for this engine's full-turn API
 - `hydra`: deeper tactical search bot with stronger pair ordering, forced-block defense, immediate-threat forking, and richer window/cluster evaluation
 - `orca`: balanced generic minimax bot with threat-cover scoring

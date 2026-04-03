@@ -12,6 +12,7 @@ src/bot-wasm/
 # Rust build output
 engine/target/
 bots/target/
+bots/generated/
 
 # Logs and local files
 npm-debug.log*

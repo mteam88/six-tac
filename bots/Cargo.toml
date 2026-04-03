@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Named bots for Six Tac built on top of the core Rust engine"
 license = "MIT OR Apache-2.0"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -20,3 +21,6 @@ js-sys = "0.3"
 ndarray = "0.17"
 ort = "2.0.0-rc.12"
 rayon = "1.11"
+
+[build-dependencies]
+cc = "1.2"

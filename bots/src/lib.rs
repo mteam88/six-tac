@@ -1,13 +1,9 @@
-#![forbid(unsafe_code)]
-
 mod ambrosia;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod arena;
 mod hydra;
-#[cfg(not(target_arch = "wasm32"))]
-mod kraken;
 mod orca;
-mod seal;
+mod seal_vendor;
 mod shared;
 
 use hex_tic_tac_engine::{Cube, Game};
@@ -35,21 +31,9 @@ pub enum BotName {
     Ambrosia,
     Hydra,
     Orca,
-    Kraken,
 }
 
 impl BotName {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [Self; 6] = [
-        Self::Sprout,
-        Self::Seal,
-        Self::Ambrosia,
-        Self::Hydra,
-        Self::Orca,
-        Self::Kraken,
-    ];
-
-    #[cfg(target_arch = "wasm32")]
     pub const ALL: [Self; 5] = [
         Self::Sprout,
         Self::Seal,
@@ -66,7 +50,6 @@ impl BotName {
             Self::Ambrosia => "ambrosia",
             Self::Hydra => "hydra",
             Self::Orca => "orca",
-            Self::Kraken => "kraken",
         }
     }
 }
@@ -81,7 +64,6 @@ impl FromStr for BotName {
             "ambrosia" => Ok(Self::Ambrosia),
             "hydra" => Ok(Self::Hydra),
             "orca" => Ok(Self::Orca),
-            "kraken" => Ok(Self::Kraken),
             _ => Err(format!("unknown bot: {value}")),
         }
     }
@@ -105,14 +87,10 @@ pub(crate) fn choose_move_with_rng<R: shared::IndexRng>(
 ) -> Result<[Cube; 2], String> {
     match bot_name {
         BotName::Sprout => shared::choose_random_legal_move_with_rng(game, rng),
-        BotName::Seal => seal::choose_seal_move(game),
+        BotName::Seal => seal_vendor::choose_seal_move(game),
         BotName::Ambrosia => ambrosia::choose_ambrosia_move(game),
         BotName::Hydra => hydra::choose_hydra_move(game),
         BotName::Orca => orca::choose_orca_move(game),
-        #[cfg(not(target_arch = "wasm32"))]
-        BotName::Kraken => kraken::choose_kraken_move(game),
-        #[cfg(target_arch = "wasm32")]
-        BotName::Kraken => Err("kraken is only available in native builds".to_string()),
     }
 }
 
@@ -122,13 +100,6 @@ struct BotMoveView {
 }
 
 #[derive(Serialize)]
-#[cfg(not(target_arch = "wasm32"))]
-struct BotListView {
-    bots: [BotName; 6],
-}
-
-#[derive(Serialize)]
-#[cfg(target_arch = "wasm32")]
 struct BotListView {
     bots: [BotName; 5],
 }
@@ -167,16 +138,6 @@ pub fn best_move_request_json(request_json: &str) -> Result<String, JsValue> {
     best_move_json(&request.bot_name, &request.game_json)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn debug_seal_root_json(game_json: &str) -> Result<String, String> {
-    let game = if game_json.trim().is_empty() {
-        Game::new()
-    } else {
-        Game::from_json_str(game_json).map_err(|error| error.to_string())?
-    };
-    serde_json::to_string(&seal::debug_seal_root(&game)?).map_err(|error| error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,7 +147,6 @@ mod tests {
         assert_eq!(BotName::from_str("ambrosia").unwrap(), BotName::Ambrosia);
         assert_eq!(BotName::from_str("hydra").unwrap(), BotName::Hydra);
         assert_eq!(BotName::from_str("orca").unwrap(), BotName::Orca);
-        assert_eq!(BotName::from_str("kraken").unwrap(), BotName::Kraken);
         assert!(BotName::from_str("abrosia").is_err());
     }
 
