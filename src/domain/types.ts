@@ -4,7 +4,7 @@ export type Player = "One" | "Two";
 export type SessionMode = "local" | "private" | "bot" | "matchmade";
 export type SessionStatus = "waiting" | "active" | "finished" | "abandoned";
 export type FinishReason = "win" | "timeout" | "abandoned" | null;
-export type BotName = "sprout" | "seal" | "ambrosia" | "hydra";
+export type BotName = "sprout" | "seal" | "ambrosia" | "hydra" | "orca";
 
 export type Cube = {
   x: number;
