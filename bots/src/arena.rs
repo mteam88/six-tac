@@ -282,6 +282,18 @@ struct AggregateMatch {
 
 const MATCH_PROGRESS_BATCH_GAMES: usize = 128;
 
+fn progress_batch_games(total_games: usize) -> usize {
+    if total_games <= 8 {
+        2
+    } else if total_games <= 32 {
+        4
+    } else if total_games <= 128 {
+        8
+    } else {
+        MATCH_PROGRESS_BATCH_GAMES
+    }
+}
+
 impl AggregateMatch {
     fn new(candidate: BotName, baseline: BotName) -> Self {
         Self {
@@ -322,8 +334,9 @@ where
     let mut aggregate = AggregateMatch::new(config.first, config.second);
     let mut completed_games = 0usize;
 
+    let progress_batch_games = progress_batch_games(config.games);
     while completed_games < config.games {
-        let batch_games = MATCH_PROGRESS_BATCH_GAMES.min(config.games - completed_games);
+        let batch_games = progress_batch_games.min(config.games - completed_games);
         let batch = run_match_batch(config, completed_games, batch_games)?;
         merge_match_summary(&mut aggregate, &batch);
         completed_games += batch_games;
