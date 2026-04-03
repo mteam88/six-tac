@@ -959,8 +959,9 @@ mod tests {
 
     #[test]
     fn elo_runs_for_three_bots() {
+        let bots = [BotName::Sprout, BotName::Seal, BotName::Ambrosia];
         let summary = run_elo(
-            &BotName::ALL,
+            &bots,
             EloConfig {
                 games_per_pair: 2,
                 max_turns: 32,

@@ -14,6 +14,7 @@ export const BOT_OPTIONS: Array<{ value: BotName; label: string }> = [
   { value: "sprout", label: "Sprout" },
   { value: "seal", label: "Seal" },
   { value: "ambrosia", label: "Ambrosia" },
+  { value: "hydra", label: "Hydra" },
 ];
 
 export type SettingsResult = {
@@ -64,7 +65,7 @@ export class SettingsModal {
       settingsSaveButton.textContent = "Create";
     } else if (mode === "bot") {
       settingsTitle.textContent = "Play bot";
-      settingsHint.textContent = "Sprout makes random moves. Seal uses minimax search with alpha-beta pruning. Ambrosia scores moves with weighted board features.";
+      settingsHint.textContent = "Sprout makes random moves. Seal uses shallow minimax. Ambrosia scores weighted patterns. Hydra adds deeper tactical search, forced-block defense, and threat-fork planning.";
       settingsSaveButton.textContent = "Play";
       this.elements.settingsBotSelect.value = settings.botName;
     } else {

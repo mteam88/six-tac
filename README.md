@@ -17,7 +17,7 @@ Credit to [@webgoatguy](https://www.youtube.com/@webgoatguy) on Youtube: [https:
 - Fully offline local games after the app has been loaded once
 - Create a room
 - Join with a 6 digit code
-- Play against Rust/WASM bots (`sprout`, `seal`, `ambrosia`)
+- Play against Rust/WASM bots (`sprout`, `seal`, `ambrosia`, `hydra`)
 - Anonymous matchmaking
 - Fully configurable chess clocks for online games
 - No usernames or accounts

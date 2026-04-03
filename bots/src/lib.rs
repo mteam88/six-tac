@@ -3,6 +3,7 @@
 mod ambrosia;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod arena;
+mod hydra;
 mod seal;
 mod shared;
 
@@ -26,10 +27,11 @@ pub enum BotName {
     Sprout,
     Seal,
     Ambrosia,
+    Hydra,
 }
 
 impl BotName {
-    pub const ALL: [Self; 3] = [Self::Sprout, Self::Seal, Self::Ambrosia];
+    pub const ALL: [Self; 4] = [Self::Sprout, Self::Seal, Self::Ambrosia, Self::Hydra];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -37,6 +39,7 @@ impl BotName {
             Self::Sprout => "sprout",
             Self::Seal => "seal",
             Self::Ambrosia => "ambrosia",
+            Self::Hydra => "hydra",
         }
     }
 }
@@ -49,6 +52,7 @@ impl FromStr for BotName {
             "sprout" => Ok(Self::Sprout),
             "seal" => Ok(Self::Seal),
             "ambrosia" => Ok(Self::Ambrosia),
+            "hydra" => Ok(Self::Hydra),
             _ => Err(format!("unknown bot: {value}")),
         }
     }
@@ -74,6 +78,7 @@ pub(crate) fn choose_move_with_rng<R: shared::IndexRng>(
         BotName::Sprout => shared::choose_random_legal_move_with_rng(game, rng),
         BotName::Seal => seal::choose_seal_move(game),
         BotName::Ambrosia => ambrosia::choose_ambrosia_move(game),
+        BotName::Hydra => hydra::choose_hydra_move(game),
     }
 }
 
@@ -84,7 +89,7 @@ struct BotMoveView {
 
 #[derive(Serialize)]
 struct BotListView {
-    bots: [BotName; 3],
+    bots: [BotName; 4],
 }
 
 #[derive(Deserialize)]
@@ -128,6 +133,7 @@ mod tests {
     #[test]
     fn parses_named_bots() {
         assert_eq!(BotName::from_str("ambrosia").unwrap(), BotName::Ambrosia);
+        assert_eq!(BotName::from_str("hydra").unwrap(), BotName::Hydra);
         assert!(BotName::from_str("abrosia").is_err());
     }
 
