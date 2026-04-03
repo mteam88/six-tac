@@ -6,12 +6,14 @@ fn main() {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
+    use serde::Serialize;
     use six_tac_bots::{
         run_compare, run_compare_with_progress, run_elo, run_elo_with_progress, run_match,
         run_match_with_progress, BotName, CompareConfig, CompareProgress, CompareSummary,
-        EloConfig, EloProgress, EloSummary, MatchConfig, MatchProgress, MatchSummary,
+        EloConfig, EloProgress, EloSummary, MatchConfig, MatchProgress, MatchSummary, SeatRecord,
     };
     use std::env;
+    use std::fmt::Display;
     use std::str::FromStr;
 
     pub fn main() {
@@ -54,15 +56,11 @@ mod native {
         let mut index = 2;
         while index < args.len() {
             match args[index].as_str() {
-                "--games" | "-n" => {
-                    config.games = parse_usize_flag(args, &mut index, "--games")?;
-                }
+                "--games" | "-n" => config.games = parse_flag(args, &mut index, "--games")?,
                 "--max-turns" => {
-                    config.max_turns = parse_usize_flag(args, &mut index, "--max-turns")?;
+                    config.max_turns = parse_flag(args, &mut index, "--max-turns")?
                 }
-                "--seed" => {
-                    config.seed = parse_u64_flag(args, &mut index, "--seed")?;
-                }
+                "--seed" => config.seed = parse_flag(args, &mut index, "--seed")?,
                 "--json" => {
                     json = true;
                     index += 1;
@@ -76,15 +74,7 @@ mod native {
         } else {
             run_match_with_progress(config, print_match_progress)?
         };
-        if json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?
-            );
-        } else {
-            print_summary(&summary);
-        }
-        Ok(())
+        emit_output(json, &summary, print_summary)
     }
 
     fn run_elo_command(args: &[String]) -> Result<(), String> {
@@ -109,17 +99,13 @@ mod native {
         while index < args.len() {
             match args[index].as_str() {
                 "--games" | "-n" | "--games-per-pair" => {
-                    config.games_per_pair = parse_usize_flag(args, &mut index, "--games")?;
+                    config.games_per_pair = parse_flag(args, &mut index, "--games")?
                 }
                 "--max-turns" => {
-                    config.max_turns = parse_usize_flag(args, &mut index, "--max-turns")?;
+                    config.max_turns = parse_flag(args, &mut index, "--max-turns")?
                 }
-                "--seed" => {
-                    config.seed = parse_u64_flag(args, &mut index, "--seed")?;
-                }
-                "--k-factor" => {
-                    config.k_factor = parse_f64_flag(args, &mut index, "--k-factor")?;
-                }
+                "--seed" => config.seed = parse_flag(args, &mut index, "--seed")?,
+                "--k-factor" => config.k_factor = parse_flag(args, &mut index, "--k-factor")?,
                 "--json" => {
                     json = true;
                     index += 1;
@@ -133,15 +119,7 @@ mod native {
         } else {
             run_elo_with_progress(&bots, config, print_elo_progress)?
         };
-        if json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?
-            );
-        } else {
-            print_elo_summary(&summary);
-        }
-        Ok(())
+        emit_output(json, &summary, print_elo_summary)
     }
 
     fn run_compare_command(args: &[String]) -> Result<(), String> {
@@ -155,22 +133,20 @@ mod native {
         while index < args.len() {
             match args[index].as_str() {
                 "--games" | "-n" | "--max-games" => {
-                    config.max_games = parse_usize_flag(args, &mut index, "--games")?;
+                    config.max_games = parse_flag(args, &mut index, "--games")?
                 }
                 "--batch-size" => {
-                    config.batch_size = parse_usize_flag(args, &mut index, "--batch-size")?;
+                    config.batch_size = parse_flag(args, &mut index, "--batch-size")?
                 }
                 "--min-games" => {
-                    config.min_games = parse_usize_flag(args, &mut index, "--min-games")?;
+                    config.min_games = parse_flag(args, &mut index, "--min-games")?
                 }
                 "--max-turns" => {
-                    config.max_turns = parse_usize_flag(args, &mut index, "--max-turns")?;
+                    config.max_turns = parse_flag(args, &mut index, "--max-turns")?
                 }
-                "--seed" => {
-                    config.seed = parse_u64_flag(args, &mut index, "--seed")?;
-                }
+                "--seed" => config.seed = parse_flag(args, &mut index, "--seed")?,
                 "--confidence-z" | "--z" => {
-                    config.confidence_z = parse_f64_flag(args, &mut index, "--confidence-z")?;
+                    config.confidence_z = parse_flag(args, &mut index, "--confidence-z")?
                 }
                 "--json" => {
                     json = true;
@@ -185,48 +161,37 @@ mod native {
         } else {
             run_compare_with_progress(config, print_compare_progress)?
         };
+        emit_output(json, &summary, print_compare_summary)
+    }
+
+    fn parse_flag<T>(args: &[String], index: &mut usize, name: &str) -> Result<T, String>
+    where
+        T: FromStr,
+        T::Err: Display,
+    {
+        *index += 1;
+        let value = args
+            .get(*index)
+            .ok_or_else(|| format!("missing value for {name}"))?
+            .parse::<T>()
+            .map_err(|error| format!("invalid value for {name}: {error}"))?;
+        *index += 1;
+        Ok(value)
+    }
+
+    fn emit_output<T>(json: bool, summary: &T, render: impl FnOnce(&T)) -> Result<(), String>
+    where
+        T: Serialize,
+    {
         if json {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?
+                serde_json::to_string_pretty(summary).map_err(|error| error.to_string())?
             );
         } else {
-            print_compare_summary(&summary);
+            render(summary);
         }
         Ok(())
-    }
-
-    fn parse_usize_flag(args: &[String], index: &mut usize, name: &str) -> Result<usize, String> {
-        *index += 1;
-        let value = args
-            .get(*index)
-            .ok_or_else(|| format!("missing value for {name}"))?
-            .parse::<usize>()
-            .map_err(|error| format!("invalid value for {name}: {error}"))?;
-        *index += 1;
-        Ok(value)
-    }
-
-    fn parse_u64_flag(args: &[String], index: &mut usize, name: &str) -> Result<u64, String> {
-        *index += 1;
-        let value = args
-            .get(*index)
-            .ok_or_else(|| format!("missing value for {name}"))?
-            .parse::<u64>()
-            .map_err(|error| format!("invalid value for {name}: {error}"))?;
-        *index += 1;
-        Ok(value)
-    }
-
-    fn parse_f64_flag(args: &[String], index: &mut usize, name: &str) -> Result<f64, String> {
-        *index += 1;
-        let value = args
-            .get(*index)
-            .ok_or_else(|| format!("missing value for {name}"))?
-            .parse::<f64>()
-            .map_err(|error| format!("invalid value for {name}: {error}"))?;
-        *index += 1;
-        Ok(value)
     }
 
     fn print_match_progress(progress: MatchProgress) {
@@ -269,10 +234,7 @@ mod native {
 
     fn print_summary(summary: &MatchSummary) {
         println!("match: {} vs {}", summary.first.bot, summary.second.bot);
-        println!(
-            "games: {} | seed {}",
-            summary.total_games, summary.config.seed
-        );
+        println!("games: {} | seed {}", summary.total_games, summary.config.seed);
         println!("max turns: {}", summary.config.max_turns);
         println!(
             "elapsed: {:.3}s | throughput: {:.1} games/s | avg turns: {:.2}",
@@ -289,16 +251,8 @@ mod native {
         println!("seat split:");
         print_seat_line(summary.first.bot, "player one", summary.first.as_player_one);
         print_seat_line(summary.first.bot, "player two", summary.first.as_player_two);
-        print_seat_line(
-            summary.second.bot,
-            "player one",
-            summary.second.as_player_one,
-        );
-        print_seat_line(
-            summary.second.bot,
-            "player two",
-            summary.second.as_player_two,
-        );
+        print_seat_line(summary.second.bot, "player one", summary.second.as_player_one);
+        print_seat_line(summary.second.bot, "player two", summary.second.as_player_two);
     }
 
     fn print_elo_summary(summary: &EloSummary) {
@@ -339,10 +293,7 @@ mod native {
     }
 
     fn print_compare_summary(summary: &CompareSummary) {
-        println!(
-            "compare: {} vs {}",
-            summary.candidate.bot, summary.baseline.bot
-        );
+        println!("compare: {} vs {}", summary.candidate.bot, summary.baseline.bot);
         println!(
             "games: {} / {} | batch {} | min {} | seed {}",
             summary.total_games,
@@ -385,7 +336,7 @@ mod native {
         println!("  {:<10} {}", "unfinished", summary.unfinished_games);
     }
 
-    fn print_seat_line(bot: BotName, seat: &str, record: six_tac_bots::SeatRecord) {
+    fn print_seat_line(bot: BotName, seat: &str, record: SeatRecord) {
         println!(
             "  {:<10} as {:<10} games {:>4} | wins {:>4} | losses {:>4} | unfinished {:>4}",
             bot, seat, record.games, record.wins, record.losses, record.unfinished
