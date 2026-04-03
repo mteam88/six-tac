@@ -64,7 +64,7 @@ export class SettingsModal {
       settingsSaveButton.textContent = "Create";
     } else if (mode === "bot") {
       settingsTitle.textContent = "Play bot";
-      settingsHint.textContent = "Sprout is random. Seal searches. Ambrosia is a translated feature-based heuristic bot.";
+      settingsHint.textContent = "Sprout makes random moves. Seal uses minimax search with alpha-beta pruning. Ambrosia scores moves with weighted board features.";
       settingsSaveButton.textContent = "Play";
       this.elements.settingsBotSelect.value = settings.botName;
     } else {
