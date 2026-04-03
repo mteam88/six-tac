@@ -238,6 +238,33 @@ pub struct CompareProgress {
     pub elapsed_ms: u128,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendGameFile {
+    pub format: &'static str,
+    pub game_json: String,
+    pub title: String,
+    pub source: FrontendGameSource,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendGameSource {
+    pub kind: &'static str,
+    pub matchup: String,
+    pub game_number: usize,
+    pub first_bot: BotName,
+    pub second_bot: BotName,
+    pub player_one_bot: BotName,
+    pub player_two_bot: BotName,
+    pub winner_bot: Option<BotName>,
+    pub winner_player: Option<Player>,
+    pub finished: bool,
+    pub max_turns: usize,
+    pub seed: u64,
+    pub turns: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum GameOutcome {
     Win { winner: BotName },
@@ -251,14 +278,16 @@ enum SeatOutcome {
     Unfinished,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct GameStats {
     turns: usize,
     outcome: GameOutcome,
+    game_json: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct GameRun {
+    game_index: usize,
     first_seat: Player,
     stats: GameStats,
 }
@@ -308,23 +337,104 @@ impl AggregateMatch {
 }
 
 pub fn run_match(config: MatchConfig) -> Result<MatchSummary, String> {
-    validate_match_config(config)?;
-
-    let started = Instant::now();
-    let mut summary = run_match_batch(config, 0, config.games)?;
-    summary.elapsed_ms = started.elapsed().as_millis();
-    summary.games_per_second = if summary.elapsed_ms == 0 {
-        summary.total_games as f64
-    } else {
-        summary.total_games as f64 / (summary.elapsed_ms as f64 / 1_000.0)
-    };
-    Ok(summary)
+    Ok(run_match_internal(config, false, |_| {})?.0)
 }
 
 pub fn run_match_with_progress<F>(
     config: MatchConfig,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<MatchSummary, String>
+where
+    F: FnMut(MatchProgress),
+{
+    Ok(run_match_internal(config, false, on_progress)?.0)
+}
+
+pub fn run_match_with_frontend_games(
+    config: MatchConfig,
+) -> Result<(MatchSummary, Vec<FrontendGameFile>), String> {
+    run_match_with_frontend_games_and_progress(config, |_| {})
+}
+
+pub fn run_match_with_frontend_games_and_progress<F>(
+    config: MatchConfig,
+    on_progress: F,
+) -> Result<(MatchSummary, Vec<FrontendGameFile>), String>
+where
+    F: FnMut(MatchProgress),
+{
+    let (summary, runs) = run_match_internal(config, true, on_progress)?;
+    Ok((summary, export_frontend_games(runs, config, "harness_match", 0)))
+}
+
+pub fn run_elo(bots: &[BotName], config: EloConfig) -> Result<EloSummary, String> {
+    Ok(run_elo_internal(bots, config, false, |_| {})?.0)
+}
+
+pub fn run_elo_with_progress<F>(
+    bots: &[BotName],
+    config: EloConfig,
+    on_progress: F,
+) -> Result<EloSummary, String>
+where
+    F: FnMut(EloProgress),
+{
+    Ok(run_elo_internal(bots, config, false, on_progress)?.0)
+}
+
+pub fn run_elo_with_frontend_games(
+    bots: &[BotName],
+    config: EloConfig,
+) -> Result<(EloSummary, Vec<FrontendGameFile>), String> {
+    run_elo_with_frontend_games_and_progress(bots, config, |_| {})
+}
+
+pub fn run_elo_with_frontend_games_and_progress<F>(
+    bots: &[BotName],
+    config: EloConfig,
+    on_progress: F,
+) -> Result<(EloSummary, Vec<FrontendGameFile>), String>
+where
+    F: FnMut(EloProgress),
+{
+    run_elo_internal(bots, config, true, on_progress)
+}
+
+pub fn run_compare(config: CompareConfig) -> Result<CompareSummary, String> {
+    Ok(run_compare_internal(config, false, |_| {})?.0)
+}
+
+pub fn run_compare_with_progress<F>(
+    config: CompareConfig,
+    on_progress: F,
+) -> Result<CompareSummary, String>
+where
+    F: FnMut(CompareProgress),
+{
+    Ok(run_compare_internal(config, false, on_progress)?.0)
+}
+
+pub fn run_compare_with_frontend_games(
+    config: CompareConfig,
+) -> Result<(CompareSummary, Vec<FrontendGameFile>), String> {
+    run_compare_with_frontend_games_and_progress(config, |_| {})
+}
+
+pub fn run_compare_with_frontend_games_and_progress<F>(
+    config: CompareConfig,
+    on_progress: F,
+) -> Result<(CompareSummary, Vec<FrontendGameFile>), String>
+where
+    F: FnMut(CompareProgress),
+{
+    run_compare_internal(config, true, on_progress)
+}
+
+fn run_match_internal<F>(
+    config: MatchConfig,
+    capture_games: bool,
+    mut on_progress: F,
+) -> Result<(MatchSummary, Vec<GameRun>), String>
 where
     F: FnMut(MatchProgress),
 {
@@ -333,13 +443,17 @@ where
     let started = Instant::now();
     let mut aggregate = AggregateMatch::new(config.first, config.second);
     let mut completed_games = 0usize;
+    let mut runs = Vec::new();
 
     let progress_batch_games = progress_batch_games(config.games);
     while completed_games < config.games {
         let batch_games = progress_batch_games.min(config.games - completed_games);
-        let batch = run_match_batch(config, completed_games, batch_games)?;
-        merge_match_summary(&mut aggregate, &batch);
+        let batch = run_match_batch(config, completed_games, batch_games, capture_games)?;
+        merge_match_summary(&mut aggregate, &batch.summary);
         completed_games += batch_games;
+        if capture_games {
+            runs.extend(batch.runs);
+        }
 
         on_progress(MatchProgress {
             completed_games,
@@ -351,22 +465,18 @@ where
         });
     }
 
-    Ok(finalize_match_summary(
-        config,
-        aggregate,
-        started.elapsed().as_millis(),
+    Ok((
+        finalize_match_summary(config, aggregate, started.elapsed().as_millis()),
+        runs,
     ))
 }
 
-pub fn run_elo(bots: &[BotName], config: EloConfig) -> Result<EloSummary, String> {
-    run_elo_with_progress(bots, config, |_| {})
-}
-
-pub fn run_elo_with_progress<F>(
+fn run_elo_internal<F>(
     bots: &[BotName],
     config: EloConfig,
+    capture_games: bool,
     mut on_progress: F,
-) -> Result<EloSummary, String>
+) -> Result<(EloSummary, Vec<FrontendGameFile>), String>
 where
     F: FnMut(EloProgress),
 {
@@ -381,12 +491,13 @@ where
         .map(|bot| EloStanding::new(bot, config.initial_rating))
         .collect::<Vec<_>>();
     let mut matchups = Vec::new();
+    let mut exported_games = Vec::new();
 
     for first_index in 0..bots.len() {
         for second_index in (first_index + 1)..bots.len() {
             let first = bots[first_index];
             let second = bots[second_index];
-            let summary = run_match(MatchConfig {
+            let match_config = MatchConfig {
                 first,
                 second,
                 games: config.games_per_pair,
@@ -395,7 +506,8 @@ where
                     config.seed,
                     ((first_index as u64) << 32) | second_index as u64,
                 ),
-            })?;
+            };
+            let (summary, runs) = run_match_internal(match_config, capture_games, |_| {})?;
 
             let (left, right) = standings.split_at_mut(second_index);
             let first_standing = &mut left[first_index];
@@ -421,6 +533,15 @@ where
                 average_turns: summary.average_turns,
             });
 
+            if capture_games {
+                exported_games.extend(export_frontend_games(
+                    runs,
+                    match_config,
+                    "harness_elo",
+                    0,
+                ));
+            }
+
             completed_pairs += 1;
             on_progress(EloProgress {
                 completed_pairs,
@@ -438,21 +559,21 @@ where
             .then_with(|| a.bot.as_str().cmp(b.bot.as_str()))
     });
 
-    Ok(EloSummary {
-        config,
-        standings,
-        matchups,
-    })
+    Ok((
+        EloSummary {
+            config,
+            standings,
+            matchups,
+        },
+        exported_games,
+    ))
 }
 
-pub fn run_compare(config: CompareConfig) -> Result<CompareSummary, String> {
-    run_compare_with_progress(config, |_| {})
-}
-
-pub fn run_compare_with_progress<F>(
+fn run_compare_internal<F>(
     config: CompareConfig,
+    capture_games: bool,
     mut on_progress: F,
-) -> Result<CompareSummary, String>
+) -> Result<(CompareSummary, Vec<FrontendGameFile>), String>
 where
     F: FnMut(CompareProgress),
 {
@@ -462,24 +583,32 @@ where
     let mut aggregate = AggregateMatch::new(config.candidate, config.baseline);
     let mut batches_run = 0usize;
     let mut stopped_early = false;
+    let mut exported_games = Vec::new();
 
     while aggregate.total_games < config.max_games {
         let games = config
             .batch_size
             .min(config.max_games.saturating_sub(aggregate.total_games));
-        let batch = run_match_batch(
-            MatchConfig {
-                first: config.candidate,
-                second: config.baseline,
-                games,
-                max_turns: config.max_turns,
-                seed: mix_seed(config.seed, batches_run as u64),
-            },
-            0,
+        let match_config = MatchConfig {
+            first: config.candidate,
+            second: config.baseline,
             games,
-        )?;
-        merge_match_summary(&mut aggregate, &batch);
+            max_turns: config.max_turns,
+            seed: mix_seed(config.seed, batches_run as u64),
+        };
+        let game_offset = aggregate.total_games;
+        let (summary, runs) = run_match_internal(match_config, capture_games, |_| {})?;
+        merge_match_summary(&mut aggregate, &summary);
         batches_run += 1;
+
+        if capture_games {
+            exported_games.extend(export_frontend_games(
+                runs,
+                match_config,
+                "harness_compare",
+                game_offset,
+            ));
+        }
 
         let stats = score_stats(
             aggregate.candidate.wins,
@@ -507,52 +636,55 @@ where
         }
     }
 
-    Ok(finalize_compare_summary(
-        config,
-        aggregate,
-        batches_run,
-        stopped_early,
-        started.elapsed().as_millis(),
+    Ok((
+        finalize_compare_summary(
+            config,
+            aggregate,
+            batches_run,
+            stopped_early,
+            started.elapsed().as_millis(),
+        ),
+        exported_games,
     ))
+}
+
+struct MatchBatch {
+    summary: MatchSummary,
+    runs: Vec<GameRun>,
 }
 
 fn run_match_batch(
     config: MatchConfig,
     start_game_index: usize,
     games: usize,
-) -> Result<MatchSummary, String> {
-    let aggregate = (0..games)
+    capture_game_json: bool,
+) -> Result<MatchBatch, String> {
+    let runs = (0..games)
         .into_par_iter()
         .with_min_len(16)
-        .map(|index| run_single_game(config, start_game_index + index))
-        .try_fold(
-            || AggregateMatch::new(config.first, config.second),
-            |mut aggregate, run| {
-                let run = run?;
-                aggregate.total_games += 1;
-                aggregate.total_turns += run.stats.turns;
-                apply_result_to_aggregate(&mut aggregate, run);
-                Ok::<_, String>(aggregate)
-            },
-        )
-        .try_reduce(
-            || AggregateMatch::new(config.first, config.second),
-            |mut left, right| {
-                merge_aggregate_match(&mut left, right);
-                Ok::<_, String>(left)
-            },
-        )?;
+        .map(|index| run_single_game(config, start_game_index + index, capture_game_json))
+        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(MatchSummary {
-        config,
-        first: aggregate.candidate,
-        second: aggregate.baseline,
-        total_games: aggregate.total_games,
-        finished_games: aggregate.finished_games,
-        unfinished_games: aggregate.unfinished_games,
-        average_turns: aggregate.total_turns as f64 / aggregate.total_games as f64,
-        elapsed_ms: 0,
-        games_per_second: 0.0,
+    let mut aggregate = AggregateMatch::new(config.first, config.second);
+    for run in &runs {
+        aggregate.total_games += 1;
+        aggregate.total_turns += run.stats.turns;
+        apply_result_to_aggregate(&mut aggregate, run);
+    }
+
+    Ok(MatchBatch {
+        summary: MatchSummary {
+            config,
+            first: aggregate.candidate,
+            second: aggregate.baseline,
+            total_games: aggregate.total_games,
+            finished_games: aggregate.finished_games,
+            unfinished_games: aggregate.unfinished_games,
+            average_turns: aggregate.total_turns as f64 / aggregate.total_games as f64,
+            elapsed_ms: 0,
+            games_per_second: 0.0,
+        },
+        runs,
     })
 }
 
@@ -626,6 +758,73 @@ fn finalize_compare_summary(
     }
 }
 
+fn export_frontend_games(
+    runs: Vec<GameRun>,
+    config: MatchConfig,
+    kind: &'static str,
+    game_index_offset: usize,
+) -> Vec<FrontendGameFile> {
+    runs.into_iter()
+        .map(|mut run| {
+            run.game_index += game_index_offset;
+            frontend_game_from_run(run, config, kind)
+        })
+        .collect()
+}
+
+fn frontend_game_from_run(
+    run: GameRun,
+    config: MatchConfig,
+    kind: &'static str,
+) -> FrontendGameFile {
+    let matchup = format!("{} vs {}", config.first, config.second);
+    let player_one_bot = if run.first_seat == Player::One {
+        config.first
+    } else {
+        config.second
+    };
+    let player_two_bot = if run.first_seat == Player::Two {
+        config.first
+    } else {
+        config.second
+    };
+    let winner_bot = match run.stats.outcome {
+        GameOutcome::Win { winner } => Some(winner),
+        GameOutcome::TurnLimit => None,
+    };
+    let winner_player = winner_bot.map(|winner| {
+        if winner == config.first {
+            run.first_seat
+        } else {
+            run.first_seat.other()
+        }
+    });
+
+    FrontendGameFile {
+        format: "six-tac-game/v1",
+        game_json: run
+            .stats
+            .game_json
+            .expect("frontend game export requires captured game json"),
+        title: format!("{matchup} • game {}", run.game_index + 1),
+        source: FrontendGameSource {
+            kind,
+            matchup,
+            game_number: run.game_index + 1,
+            first_bot: config.first,
+            second_bot: config.second,
+            player_one_bot,
+            player_two_bot,
+            winner_bot,
+            winner_player,
+            finished: winner_bot.is_some(),
+            max_turns: config.max_turns,
+            seed: config.seed,
+            turns: run.stats.turns,
+        },
+    }
+}
+
 fn validate_match_config(config: MatchConfig) -> Result<(), String> {
     if config.games == 0 {
         return Err("games must be at least 1".to_string());
@@ -679,7 +878,11 @@ fn validate_compare_config(config: CompareConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn run_single_game(config: MatchConfig, game_index: usize) -> Result<GameRun, String> {
+fn run_single_game(
+    config: MatchConfig,
+    game_index: usize,
+    capture_game_json: bool,
+) -> Result<GameRun, String> {
     let mut seat_rng = MatchRng::new(mix_seed(config.seed, game_index as u64));
     let first_gets_first_move = seat_rng.next_u64() & 1 == 0;
     let first_seat = if first_gets_first_move {
@@ -697,12 +900,17 @@ fn run_single_game(config: MatchConfig, game_index: usize) -> Result<GameRun, St
         second_seat,
         config.max_turns,
         seat_rng.next_u64(),
+        capture_game_json,
     )?;
 
-    Ok(GameRun { first_seat, stats })
+    Ok(GameRun {
+        game_index,
+        first_seat,
+        stats,
+    })
 }
 
-fn apply_result_to_aggregate(aggregate: &mut AggregateMatch, run: GameRun) {
+fn apply_result_to_aggregate(aggregate: &mut AggregateMatch, run: &GameRun) {
     let second_seat = run.first_seat.other();
     let first_bot = aggregate.candidate.bot;
     let second_bot = aggregate.baseline.bot;
@@ -731,8 +939,16 @@ fn apply_result_to_aggregate(aggregate: &mut AggregateMatch, run: GameRun) {
         }
         GameOutcome::TurnLimit => {
             aggregate.unfinished_games += 1;
-            record_seat_game(&mut aggregate.candidate, run.first_seat, SeatOutcome::Unfinished);
-            record_seat_game(&mut aggregate.baseline, second_seat, SeatOutcome::Unfinished);
+            record_seat_game(
+                &mut aggregate.candidate,
+                run.first_seat,
+                SeatOutcome::Unfinished,
+            );
+            record_seat_game(
+                &mut aggregate.baseline,
+                second_seat,
+                SeatOutcome::Unfinished,
+            );
         }
     }
 }
@@ -771,15 +987,6 @@ fn merge_match_summary(aggregate: &mut AggregateMatch, summary: &MatchSummary) {
     aggregate.total_turns += (summary.average_turns * summary.total_games as f64).round() as usize;
     merge_bot_record(&mut aggregate.candidate, summary.first);
     merge_bot_record(&mut aggregate.baseline, summary.second);
-}
-
-fn merge_aggregate_match(target: &mut AggregateMatch, source: AggregateMatch) {
-    target.total_games += source.total_games;
-    target.finished_games += source.finished_games;
-    target.unfinished_games += source.unfinished_games;
-    target.total_turns += source.total_turns;
-    merge_bot_record(&mut target.candidate, source.candidate);
-    merge_bot_record(&mut target.baseline, source.baseline);
 }
 
 fn merge_bot_record(target: &mut BotRecord, source: BotRecord) {
@@ -863,6 +1070,7 @@ fn play_game(
     second_seat: Player,
     max_turns: usize,
     seed: u64,
+    capture_game_json: bool,
 ) -> Result<GameStats, String> {
     let mut rng = MatchRng::new(seed);
 
@@ -897,6 +1105,11 @@ fn play_game(
     Ok(GameStats {
         turns: game.turn_count() as usize,
         outcome,
+        game_json: if capture_game_json {
+            Some(game.to_json().map_err(|error| error.to_string())?)
+        } else {
+            None
+        },
     })
 }
 

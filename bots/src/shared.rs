@@ -331,11 +331,11 @@ pub(crate) fn minimal_threat_cover_size(threat_windows: &[ThreatWindow]) -> usiz
     cells.sort_unstable_by_key(|coord| cube_key(*coord));
     cells.dedup();
 
-    if cells
-        .iter()
-        .copied()
-        .any(|cell| threat_windows.iter().all(|window| window.cells().contains(&cell)))
-    {
+    if cells.iter().copied().any(|cell| {
+        threat_windows
+            .iter()
+            .all(|window| window.cells().contains(&cell))
+    }) {
         return 1;
     }
 

@@ -18,6 +18,7 @@ Credit to [@webgoatguy](https://www.youtube.com/@webgoatguy) on Youtube: [https:
 - Create a room
 - Join with a 6 digit code
 - Play against Rust/WASM bots (`sprout`, `seal`, `ambrosia`, `hydra`, `orca`)
+- Import exported game files and review them turn by turn in the frontend explorer
 - Anonymous matchmaking
 - Fully configurable chess clocks for online games
 - No usernames or accounts

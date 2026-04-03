@@ -278,6 +278,40 @@ input::placeholder {
   justify-content: center;
 }
 
+.review-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.review-meta,
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-meta {
+  flex-wrap: wrap;
+}
+
+.review-title {
+  max-width: min(34vw, 280px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-status {
+  justify-content: center;
+}
+
 .clock-panel {
   display: flex;
   align-items: stretch;
@@ -397,7 +431,8 @@ input::placeholder {
     min-width: 0;
   }
 
-  .clock-panel {
+  .clock-panel,
+  .review-panel {
     justify-content: center;
   }
 
@@ -419,8 +454,17 @@ input::placeholder {
 
   .bottom-main,
   .clock-panel,
+  .review-panel,
   .bottom-actions {
     justify-content: center;
+  }
+
+  .review-panel {
+    flex-direction: column;
+  }
+
+  .review-title {
+    max-width: 100%;
   }
 
   .clock-card {

@@ -1,6 +1,6 @@
 import type { LobbySettings } from "./persistence.js";
 import type { CameraState } from "./render.js";
-import type { Cube, SessionRef, SessionView } from "../domain/types.js";
+import type { Cube, FrontendGameFile, SessionRef, SessionView } from "../domain/types.js";
 
 export type Player = "One" | "Two";
 
@@ -26,6 +26,13 @@ export type PinchGesture = {
   midpointY: number;
 };
 
+export type ReviewState = {
+  title: string;
+  game: FrontendGameFile;
+  history: string[];
+  index: number;
+};
+
 export type AppState = {
   hexSize: number;
   camera: CameraState;
@@ -47,4 +54,5 @@ export type AppState = {
   activeSettingsMode: SettingsMode | null;
   matchmakingQueued: boolean;
   serverClockOffsetMs: number;
+  review: ReviewState | null;
 };

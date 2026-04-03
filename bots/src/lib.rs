@@ -4,6 +4,8 @@ mod ambrosia;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod arena;
 mod hydra;
+#[cfg(not(target_arch = "wasm32"))]
+mod kraken;
 mod orca;
 mod seal;
 mod shared;
@@ -16,10 +18,13 @@ use wasm_bindgen::prelude::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use arena::{
-    run_compare, run_compare_with_progress, run_elo, run_elo_with_progress, run_match,
+    run_compare, run_compare_with_frontend_games, run_compare_with_frontend_games_and_progress,
+    run_compare_with_progress, run_elo, run_elo_with_frontend_games,
+    run_elo_with_frontend_games_and_progress, run_elo_with_progress, run_match,
+    run_match_with_frontend_games, run_match_with_frontend_games_and_progress,
     run_match_with_progress, BotRecord, CompareConfig, CompareProgress, CompareSummary,
     CompareVerdict, EloConfig, EloMatchupSummary, EloProgress, EloStanding, EloSummary,
-    MatchConfig, MatchProgress, MatchSummary, SeatRecord,
+    FrontendGameFile, FrontendGameSource, MatchConfig, MatchProgress, MatchSummary, SeatRecord,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -30,9 +35,21 @@ pub enum BotName {
     Ambrosia,
     Hydra,
     Orca,
+    Kraken,
 }
 
 impl BotName {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const ALL: [Self; 6] = [
+        Self::Sprout,
+        Self::Seal,
+        Self::Ambrosia,
+        Self::Hydra,
+        Self::Orca,
+        Self::Kraken,
+    ];
+
+    #[cfg(target_arch = "wasm32")]
     pub const ALL: [Self; 5] = [
         Self::Sprout,
         Self::Seal,
@@ -49,6 +66,7 @@ impl BotName {
             Self::Ambrosia => "ambrosia",
             Self::Hydra => "hydra",
             Self::Orca => "orca",
+            Self::Kraken => "kraken",
         }
     }
 }
@@ -63,6 +81,7 @@ impl FromStr for BotName {
             "ambrosia" => Ok(Self::Ambrosia),
             "hydra" => Ok(Self::Hydra),
             "orca" => Ok(Self::Orca),
+            "kraken" => Ok(Self::Kraken),
             _ => Err(format!("unknown bot: {value}")),
         }
     }
@@ -90,6 +109,10 @@ pub(crate) fn choose_move_with_rng<R: shared::IndexRng>(
         BotName::Ambrosia => ambrosia::choose_ambrosia_move(game),
         BotName::Hydra => hydra::choose_hydra_move(game),
         BotName::Orca => orca::choose_orca_move(game),
+        #[cfg(not(target_arch = "wasm32"))]
+        BotName::Kraken => kraken::choose_kraken_move(game),
+        #[cfg(target_arch = "wasm32")]
+        BotName::Kraken => Err("kraken is only available in native builds".to_string()),
     }
 }
 
@@ -99,6 +122,12 @@ struct BotMoveView {
 }
 
 #[derive(Serialize)]
+#[cfg(not(target_arch = "wasm32"))]
+struct BotListView {
+    bots: [BotName; 6],
+}
+
+#[cfg(target_arch = "wasm32")]
 struct BotListView {
     bots: [BotName; 5],
 }
@@ -146,6 +175,7 @@ mod tests {
         assert_eq!(BotName::from_str("ambrosia").unwrap(), BotName::Ambrosia);
         assert_eq!(BotName::from_str("hydra").unwrap(), BotName::Hydra);
         assert_eq!(BotName::from_str("orca").unwrap(), BotName::Orca);
+        assert_eq!(BotName::from_str("kraken").unwrap(), BotName::Kraken);
         assert!(BotName::from_str("abrosia").is_err());
     }
 

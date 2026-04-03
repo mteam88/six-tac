@@ -8,12 +8,18 @@ fn main() {
 mod native {
     use serde::Serialize;
     use six_tac_bots::{
-        run_compare, run_compare_with_progress, run_elo, run_elo_with_progress, run_match,
+        run_compare, run_compare_with_frontend_games, run_compare_with_frontend_games_and_progress,
+        run_compare_with_progress, run_elo, run_elo_with_frontend_games,
+        run_elo_with_frontend_games_and_progress, run_elo_with_progress, run_match,
+        run_match_with_frontend_games, run_match_with_frontend_games_and_progress,
         run_match_with_progress, BotName, CompareConfig, CompareProgress, CompareSummary,
-        EloConfig, EloProgress, EloSummary, MatchConfig, MatchProgress, MatchSummary, SeatRecord,
+        EloConfig, EloProgress, EloSummary, FrontendGameFile, MatchConfig, MatchProgress,
+        MatchSummary, SeatRecord,
     };
     use std::env;
     use std::fmt::Display;
+    use std::fs;
+    use std::path::Path;
     use std::str::FromStr;
 
     pub fn main() {
@@ -51,16 +57,19 @@ mod native {
             return Err("expected two bot names".to_string());
         }
 
-        let mut config = MatchConfig::new(BotName::from_str(&args[0])?, BotName::from_str(&args[1])?);
+        let mut config =
+            MatchConfig::new(BotName::from_str(&args[0])?, BotName::from_str(&args[1])?);
         let mut json = false;
+        let mut export_dir = None;
         let mut index = 2;
         while index < args.len() {
             match args[index].as_str() {
                 "--games" | "-n" => config.games = parse_flag(args, &mut index, "--games")?,
-                "--max-turns" => {
-                    config.max_turns = parse_flag(args, &mut index, "--max-turns")?
-                }
+                "--max-turns" => config.max_turns = parse_flag(args, &mut index, "--max-turns")?,
                 "--seed" => config.seed = parse_flag(args, &mut index, "--seed")?,
+                "--export-dir" => {
+                    export_dir = Some(parse_flag::<String>(args, &mut index, "--export-dir")?)
+                }
                 "--json" => {
                     json = true;
                     index += 1;
@@ -69,7 +78,15 @@ mod native {
             }
         }
 
-        let summary = if json {
+        let summary = if let Some(dir) = export_dir {
+            let (summary, games) = if json {
+                run_match_with_frontend_games(config)?
+            } else {
+                run_match_with_frontend_games_and_progress(config, print_match_progress)?
+            };
+            write_frontend_games(&dir, &games)?;
+            summary
+        } else if json {
             run_match(config)?
         } else {
             run_match_with_progress(config, print_match_progress)?
@@ -96,16 +113,18 @@ mod native {
 
         let mut config = EloConfig::new();
         let mut json = false;
+        let mut export_dir = None;
         while index < args.len() {
             match args[index].as_str() {
                 "--games" | "-n" | "--games-per-pair" => {
                     config.games_per_pair = parse_flag(args, &mut index, "--games")?
                 }
-                "--max-turns" => {
-                    config.max_turns = parse_flag(args, &mut index, "--max-turns")?
-                }
+                "--max-turns" => config.max_turns = parse_flag(args, &mut index, "--max-turns")?,
                 "--seed" => config.seed = parse_flag(args, &mut index, "--seed")?,
                 "--k-factor" => config.k_factor = parse_flag(args, &mut index, "--k-factor")?,
+                "--export-dir" => {
+                    export_dir = Some(parse_flag::<String>(args, &mut index, "--export-dir")?)
+                }
                 "--json" => {
                     json = true;
                     index += 1;
@@ -114,7 +133,15 @@ mod native {
             }
         }
 
-        let summary = if json {
+        let summary = if let Some(dir) = export_dir {
+            let (summary, games) = if json {
+                run_elo_with_frontend_games(&bots, config)?
+            } else {
+                run_elo_with_frontend_games_and_progress(&bots, config, print_elo_progress)?
+            };
+            write_frontend_games(&dir, &games)?;
+            summary
+        } else if json {
             run_elo(&bots, config)?
         } else {
             run_elo_with_progress(&bots, config, print_elo_progress)?
@@ -127,26 +154,25 @@ mod native {
             return Err("expected candidate and baseline bot names".to_string());
         }
 
-        let mut config = CompareConfig::new(BotName::from_str(&args[0])?, BotName::from_str(&args[1])?);
+        let mut config =
+            CompareConfig::new(BotName::from_str(&args[0])?, BotName::from_str(&args[1])?);
         let mut json = false;
+        let mut export_dir = None;
         let mut index = 2;
         while index < args.len() {
             match args[index].as_str() {
                 "--games" | "-n" | "--max-games" => {
                     config.max_games = parse_flag(args, &mut index, "--games")?
                 }
-                "--batch-size" => {
-                    config.batch_size = parse_flag(args, &mut index, "--batch-size")?
-                }
-                "--min-games" => {
-                    config.min_games = parse_flag(args, &mut index, "--min-games")?
-                }
-                "--max-turns" => {
-                    config.max_turns = parse_flag(args, &mut index, "--max-turns")?
-                }
+                "--batch-size" => config.batch_size = parse_flag(args, &mut index, "--batch-size")?,
+                "--min-games" => config.min_games = parse_flag(args, &mut index, "--min-games")?,
+                "--max-turns" => config.max_turns = parse_flag(args, &mut index, "--max-turns")?,
                 "--seed" => config.seed = parse_flag(args, &mut index, "--seed")?,
                 "--confidence-z" | "--z" => {
                     config.confidence_z = parse_flag(args, &mut index, "--confidence-z")?
+                }
+                "--export-dir" => {
+                    export_dir = Some(parse_flag::<String>(args, &mut index, "--export-dir")?)
                 }
                 "--json" => {
                     json = true;
@@ -156,12 +182,47 @@ mod native {
             }
         }
 
-        let summary = if json {
+        let summary = if let Some(dir) = export_dir {
+            let (summary, games) = if json {
+                run_compare_with_frontend_games(config)?
+            } else {
+                run_compare_with_frontend_games_and_progress(config, print_compare_progress)?
+            };
+            write_frontend_games(&dir, &games)?;
+            summary
+        } else if json {
             run_compare(config)?
         } else {
             run_compare_with_progress(config, print_compare_progress)?
         };
         emit_output(json, &summary, print_compare_summary)
+    }
+
+    fn sanitize_filename(value: &str) -> String {
+        let mut sanitized = value
+            .chars()
+            .map(|ch| match ch {
+                'a'..='z' | 'A'..='Z' | '0'..='9' => ch.to_ascii_lowercase(),
+                _ => '-',
+            })
+            .collect::<String>();
+        while sanitized.contains("--") {
+            sanitized = sanitized.replace("--", "-");
+        }
+        sanitized.trim_matches('-').to_string()
+    }
+
+    fn write_frontend_games(dir: &str, games: &[FrontendGameFile]) -> Result<(), String> {
+        fs::create_dir_all(dir).map_err(|error| format!("could not create {dir}: {error}"))?;
+        for (index, game) in games.iter().enumerate() {
+            let file_name = format!("{:04}-{}.json", index + 1, sanitize_filename(&game.title));
+            let path = Path::new(dir).join(file_name);
+            let json = serde_json::to_string_pretty(game).map_err(|error| error.to_string())?;
+            fs::write(&path, json)
+                .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        }
+        eprintln!("exported {} frontend game files to {dir}", games.len());
+        Ok(())
     }
 
     fn parse_flag<T>(args: &[String], index: &mut usize, name: &str) -> Result<T, String>
@@ -234,7 +295,10 @@ mod native {
 
     fn print_summary(summary: &MatchSummary) {
         println!("match: {} vs {}", summary.first.bot, summary.second.bot);
-        println!("games: {} | seed {}", summary.total_games, summary.config.seed);
+        println!(
+            "games: {} | seed {}",
+            summary.total_games, summary.config.seed
+        );
         println!("max turns: {}", summary.config.max_turns);
         println!(
             "elapsed: {:.3}s | throughput: {:.1} games/s | avg turns: {:.2}",
@@ -251,8 +315,16 @@ mod native {
         println!("seat split:");
         print_seat_line(summary.first.bot, "player one", summary.first.as_player_one);
         print_seat_line(summary.first.bot, "player two", summary.first.as_player_two);
-        print_seat_line(summary.second.bot, "player one", summary.second.as_player_one);
-        print_seat_line(summary.second.bot, "player two", summary.second.as_player_two);
+        print_seat_line(
+            summary.second.bot,
+            "player one",
+            summary.second.as_player_one,
+        );
+        print_seat_line(
+            summary.second.bot,
+            "player two",
+            summary.second.as_player_two,
+        );
     }
 
     fn print_elo_summary(summary: &EloSummary) {
@@ -293,7 +365,10 @@ mod native {
     }
 
     fn print_compare_summary(summary: &CompareSummary) {
-        println!("compare: {} vs {}", summary.candidate.bot, summary.baseline.bot);
+        println!(
+            "compare: {} vs {}",
+            summary.candidate.bot, summary.baseline.bot
+        );
         println!(
             "games: {} / {} | batch {} | min {} | seed {}",
             summary.total_games,
@@ -346,15 +421,15 @@ mod native {
     fn usage() -> &'static str {
         "Usage:
   cargo run --manifest-path bots/Cargo.toml --bin harness -- list
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- match <bot-a> <bot-b> [--games N] [--max-turns N] [--seed N] [--json]
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo all [--games N] [--max-turns N] [--seed N] [--k-factor N] [--json]
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo <bot-a> <bot-b> <bot-c>... [--games N] [--max-turns N] [--seed N] [--k-factor N] [--json]
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare <candidate> <baseline> [--games N] [--batch-size N] [--min-games N] [--max-turns N] [--seed N] [--confidence-z N] [--json]
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- match <bot-a> <bot-b> [--games N] [--max-turns N] [--seed N] [--export-dir DIR] [--json]
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo all [--games N] [--max-turns N] [--seed N] [--k-factor N] [--export-dir DIR] [--json]
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo <bot-a> <bot-b> <bot-c>... [--games N] [--max-turns N] [--seed N] [--k-factor N] [--export-dir DIR] [--json]
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare <candidate> <baseline> [--games N] [--batch-size N] [--min-games N] [--max-turns N] [--seed N] [--confidence-z N] [--export-dir DIR] [--json]
 
 Examples:
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- match hydra seal --games 1000
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo all --games 200
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare hydra seal --games 1000 --batch-size 100 --min-games 200"
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- match hydra seal --games 1000 --export-dir out/games
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo all --games 200 --export-dir out/elo-games
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare hydra seal --games 1000 --batch-size 100 --min-games 200 --export-dir out/compare-games"
     }
 }
 

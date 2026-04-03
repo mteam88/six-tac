@@ -38,6 +38,7 @@ function createState(): AppState {
     activeSettingsMode: null,
     matchmakingQueued: false,
     serverClockOffsetMs: 0,
+    review: null,
   };
 }
 
@@ -112,6 +113,19 @@ export function initApp(localBindings: LocalBindings): void {
   elements.localModeButton.addEventListener("click", () => openModeSettings("local"));
   elements.createRoomButton.addEventListener("click", () => openModeSettings("private"));
   elements.playBotButton.addEventListener("click", () => openModeSettings("bot"));
+  elements.importGameButton.addEventListener("click", () => {
+    elements.importGameInput.value = "";
+    elements.importGameInput.click();
+  });
+  elements.importGameInput.addEventListener("change", () => {
+    const file = elements.importGameInput.files?.[0];
+    if (!file) return;
+    session.openImportedGame(file).catch((error) => {
+      session.setLobbyError(error instanceof Error ? error.message : "Could not open the game file.");
+    }).finally(() => {
+      elements.importGameInput.value = "";
+    });
+  });
   elements.findMatchButton.addEventListener("click", () => {
     const action = state.matchmakingQueued
       ? session.cancelMatchmakingFlow()
@@ -133,6 +147,10 @@ export function initApp(localBindings: LocalBindings): void {
     if (event.key === "Enter") elements.joinRoomButton.click();
   });
   elements.leaveRoomButton.addEventListener("click", session.leaveRoom);
+  elements.reviewStartButton.addEventListener("click", () => session.setReviewTurn(0));
+  elements.reviewPrevButton.addEventListener("click", () => session.stepReview(-1));
+  elements.reviewNextButton.addEventListener("click", () => session.stepReview(1));
+  elements.reviewEndButton.addEventListener("click", () => session.setReviewTurn(Number.POSITIVE_INFINITY));
   elements.submitTurnButton.addEventListener("click", () => {
     session.submitTurnFlow().catch((error) => {
       elements.turnPill.textContent = error instanceof Error ? error.message : "Could not play turn";

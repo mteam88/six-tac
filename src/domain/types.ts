@@ -1,7 +1,7 @@
 export type Seat = "one" | "two" | "spectator" | "local";
 export type HumanSeat = "one" | "two";
 export type Player = "One" | "Two";
-export type SessionMode = "local" | "private" | "bot" | "matchmade";
+export type SessionMode = "local" | "private" | "bot" | "matchmade" | "review";
 export type SessionStatus = "waiting" | "active" | "finished" | "abandoned";
 export type FinishReason = "win" | "timeout" | "abandoned" | null;
 export type BotName = "sprout" | "seal" | "ambrosia" | "hydra" | "orca";
@@ -101,6 +101,27 @@ export type SessionSyncUnchanged = {
 };
 
 export type SessionSyncResponse = SessionView | SessionSyncUnchanged;
+
+export type FrontendGameFile = {
+  format: "six-tac-game/v1";
+  gameJson: string;
+  title?: string;
+  source?: {
+    kind?: string;
+    matchup?: string;
+    gameNumber?: number;
+    firstBot?: string;
+    secondBot?: string;
+    playerOneBot?: string;
+    playerTwoBot?: string;
+    winnerBot?: string | null;
+    winnerPlayer?: Player | null;
+    finished?: boolean;
+    maxTurns?: number;
+    seed?: number;
+    turns?: number;
+  };
+};
 
 export type SessionRef = {
   id: string;

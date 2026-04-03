@@ -223,4 +223,3 @@ fn virtual_line_length(game: &Game, candidate: Cube, axis: Cube, player: Player)
     1 + run_length(game, candidate, axis, player)
         + run_length(game, candidate, negate(axis), player)
 }
-

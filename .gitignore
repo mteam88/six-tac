@@ -17,3 +17,8 @@ bots/target/
 npm-debug.log*
 .DS_Store
 .env
+
+# Local bot training artifacts
+bots/data/
+bots/models/
+bots/python/__pycache__/

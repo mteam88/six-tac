@@ -3,7 +3,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::shared::{
     choose_random_legal_move, collect_frontier_candidates, evaluate_position, find_immediate_win,
-    legal_pairs_from_candidates, negate, offset, scale, POSITIVE_DIRS, WIN_SCORE, WINDOW_LENGTH,
+    legal_pairs_from_candidates, negate, offset, scale, POSITIVE_DIRS, WINDOW_LENGTH, WIN_SCORE,
 };
 
 const ALL_DIRS: [Cube; 6] = [
@@ -189,7 +189,10 @@ fn ordered_pairs_rich(
         return Vec::new();
     }
 
-    let coords = candidates.iter().map(|entry| entry.coord).collect::<Vec<_>>();
+    let coords = candidates
+        .iter()
+        .map(|entry| entry.coord)
+        .collect::<Vec<_>>();
     let mut probe = game.clone();
     let mut pairs = legal_pairs_from_candidates(game, &coords)
         .into_iter()
@@ -240,7 +243,9 @@ fn candidate_cells(game: &Game, player: Player, cell_cap: usize) -> Vec<ScoredCe
     if seen.len() < 2 {
         for coord in collect_frontier_candidates(game, 8) {
             seen.insert(coord);
-            scores.entry(coord).or_insert_with(|| base_cell_score(game, coord, player));
+            scores
+                .entry(coord)
+                .or_insert_with(|| base_cell_score(game, coord, player));
         }
     }
 
@@ -295,8 +300,7 @@ fn score_pair_with_probe(
         let opponent_summary = tactical_summary(probe, player.other());
         let self_cover = min_cover_size(&self_summary.immediate_threats);
 
-        let mut score = 3 * evaluate_position(probe, player)
-            + self_summary.pressure_score
+        let mut score = 3 * evaluate_position(probe, player) + self_summary.pressure_score
             - opponent_summary.pressure_score;
 
         score += pair_alignment_bonus(pair, player, game);
@@ -323,8 +327,7 @@ fn static_eval(game: &Game, root_player: Player) -> i32 {
     let root_summary = tactical_summary(game, root_player);
     let opp_summary = tactical_summary(game, root_player.other());
 
-    let mut score = 4 * evaluate_position(game, root_player)
-        + root_summary.pressure_score
+    let mut score = 4 * evaluate_position(game, root_player) + root_summary.pressure_score
         - opp_summary.pressure_score
         + cluster_score(game, root_player)
         - cluster_score(game, root_player.other());
@@ -430,7 +433,10 @@ fn min_cover_size(threats: &[WindowPattern]) -> usize {
     }
 
     for &cell in &cells {
-        if threats.iter().all(|threat| threat.empties().contains(&cell)) {
+        if threats
+            .iter()
+            .all(|threat| threat.empties().contains(&cell))
+        {
             return 1;
         }
     }
@@ -512,8 +518,12 @@ fn pair_alignment_bonus(pair: [Cube; 2], player: Player, game: &Game) -> i32 {
     };
 
     for dir in POSITIVE_DIRS {
-        let line_a = 1 + run_length(game, pair[0], dir, player) + run_length(game, pair[0], negate(dir), player);
-        let line_b = 1 + run_length(game, pair[1], dir, player) + run_length(game, pair[1], negate(dir), player);
+        let line_a = 1
+            + run_length(game, pair[0], dir, player)
+            + run_length(game, pair[0], negate(dir), player);
+        let line_b = 1
+            + run_length(game, pair[1], dir, player)
+            + run_length(game, pair[1], negate(dir), player);
         score += (line_a.max(line_b) * 6) as i32;
         if are_same_axis(pair[0], pair[1], dir) {
             score += 20;

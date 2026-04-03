@@ -55,3 +55,26 @@ Run a head-to-head comparison with confidence bounds:
 ```bash
 cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare orca seal --games 1000 --batch-size 100 --min-games 200
 ```
+
+Export finished games in the frontend import format:
+
+```bash
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- match hydra seal --games 20 --export-dir out/games
+```
+
+The exported JSON files can be opened from the frontend lobby via **Explore game file** and stepped through turn by turn.
+
+Sample a few midgame boards from Hydra-vs-Hydra self-play, then time each bot's move generation on those exact positions:
+
+```bash
+cargo run --release --manifest-path bots/Cargo.toml --bin move_bench --
+```
+
+Useful flags:
+
+- `--games 3 --samples-per-game 2` to change how many source games/boards are sampled
+- `--max-turns 40 --min-turn 8` to bias toward later positions
+- `--target-ms 500` to spend more timing budget per bot per board
+- `--bots hydra,orca,seal` to benchmark a subset of bots
+- `--show-json` to print the sampled turn-list JSON for each board in text mode
+- `--json` to emit the full benchmark report as machine-readable JSON

@@ -140,8 +140,7 @@ fn minimax(
 }
 
 fn evaluate_orca_position(game: &Game, root_player: Player) -> i32 {
-    evaluate_position(game, root_player) * 2
-        + evaluate_side(game, root_player)
+    evaluate_position(game, root_player) * 2 + evaluate_side(game, root_player)
         - evaluate_side(game, root_player.other())
 }
 
