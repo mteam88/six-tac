@@ -127,6 +127,7 @@ struct BotListView {
     bots: [BotName; 6],
 }
 
+#[derive(Serialize)]
 #[cfg(target_arch = "wasm32")]
 struct BotListView {
     bots: [BotName; 5],
@@ -164,6 +165,16 @@ pub fn best_move_request_json(request_json: &str) -> Result<String, JsValue> {
     let request = serde_json::from_str::<BotRequest>(request_json)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     best_move_json(&request.bot_name, &request.game_json)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn debug_seal_root_json(game_json: &str) -> Result<String, String> {
+    let game = if game_json.trim().is_empty() {
+        Game::new()
+    } else {
+        Game::from_json_str(game_json).map_err(|error| error.to_string())?
+    };
+    serde_json::to_string(&seal::debug_seal_root(&game)?).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

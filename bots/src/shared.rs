@@ -14,7 +14,6 @@ pub(crate) const FRONTIER_RADIUS: i32 = 2;
 pub(crate) const FALLBACK_RADIUS: i32 = 8;
 pub(crate) const ROOT_CANDIDATE_CAP: usize = 12;
 pub(crate) const INNER_CANDIDATE_CAP: usize = 8;
-pub(crate) const SEARCH_DEPTH: usize = 2;
 pub(crate) const WIN_SCORE: i32 = 1_000_000;
 pub(crate) const WINDOW_SCORES: [i32; 7] = [0, 2, 10, 48, 220, 1_200, WIN_SCORE / 2];
 
