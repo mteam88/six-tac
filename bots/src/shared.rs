@@ -43,8 +43,16 @@ impl ThreatWindow {
         self.len += 1;
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub(crate) fn cells(&self) -> &[Cube] {
+        &self.empties[..self.len()]
+    }
+
     fn contains_either(&self, first: Cube, second: Cube) -> bool {
-        self.empties[..self.len as usize]
+        self.cells()
             .iter()
             .any(|&coord| coord == first || coord == second)
     }
@@ -309,6 +317,42 @@ pub(crate) fn filter_pairs_by_threats(
                 .all(|window| window.contains_either(pair[0], pair[1]))
         })
         .collect()
+}
+
+pub(crate) fn minimal_threat_cover_size(threat_windows: &[ThreatWindow]) -> usize {
+    if threat_windows.is_empty() {
+        return 0;
+    }
+
+    let mut cells = threat_windows
+        .iter()
+        .flat_map(|window| window.cells().iter().copied())
+        .collect::<Vec<_>>();
+    cells.sort_unstable_by_key(|coord| cube_key(*coord));
+    cells.dedup();
+
+    if cells
+        .iter()
+        .copied()
+        .any(|cell| threat_windows.iter().all(|window| window.cells().contains(&cell)))
+    {
+        return 1;
+    }
+
+    for first in 0..cells.len() {
+        for second in (first + 1)..cells.len() {
+            let a = cells[first];
+            let b = cells[second];
+            if threat_windows
+                .iter()
+                .all(|window| window.cells().contains(&a) || window.cells().contains(&b))
+            {
+                return 2;
+            }
+        }
+    }
+
+    3
 }
 
 fn score_candidate_cell(coord: Cube, own: &FxHashSet<Cube>, opp: &FxHashSet<Cube>) -> i32 {

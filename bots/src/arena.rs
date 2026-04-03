@@ -958,10 +958,9 @@ mod tests {
     }
 
     #[test]
-    fn elo_runs_for_three_bots() {
-        let bots = [BotName::Sprout, BotName::Seal, BotName::Ambrosia];
+    fn elo_runs_for_all_bots() {
         let summary = run_elo(
-            &bots,
+            &BotName::ALL,
             EloConfig {
                 games_per_pair: 2,
                 max_turns: 32,
@@ -970,8 +969,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(summary.standings.len(), 3);
-        assert_eq!(summary.matchups.len(), 3);
+        assert_eq!(summary.standings.len(), BotName::ALL.len());
+        assert_eq!(
+            summary.matchups.len(),
+            BotName::ALL.len() * (BotName::ALL.len() - 1) / 2
+        );
     }
 
     #[test]

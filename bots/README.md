@@ -12,6 +12,11 @@ Separate Rust/WASM bot crate for Six Tac.
   - alpha-beta search over two-stone turns
 - `ambrosia`: feature-weighted heuristic bot inspired by trueharuu's Ambrosia project, translated into new logic for this engine's full-turn API
 - `hydra`: deeper tactical search bot with stronger pair ordering, forced-block defense, immediate-threat forking, and richer window/cluster evaluation
+- `orca`: balanced generic minimax bot with threat-cover scoring
+  - candidate generation from ranked frontier cells
+  - immediate-win and forced-block awareness
+  - depth-2 alpha-beta search over two-stone turns
+  - positional evaluation combining windows, line strength, connectivity, and center pressure
 
 The bot crate is intentionally separate from `engine/`, while reusing the core engine as a library.
 
@@ -20,7 +25,7 @@ The bot crate is intentionally separate from `engine/`, while reusing the core e
 Use the native Rust harness to develop and evaluate new bots without going through wasm:
 
 ```bash
-cargo run --release --manifest-path bots/Cargo.toml --bin harness -- match hydra seal --games 1000
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- match orca seal --games 1000
 ```
 
 Highlights:
@@ -48,5 +53,5 @@ cargo run --release --manifest-path bots/Cargo.toml --bin harness -- elo all --g
 Run a head-to-head comparison with confidence bounds:
 
 ```bash
-cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare hydra seal --games 1000 --batch-size 100 --min-games 200
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare orca seal --games 1000 --batch-size 100 --min-games 200
 ```
