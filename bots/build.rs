@@ -3,6 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let sealbot_dir = manifest_dir.join("vendor/SealBot");
@@ -39,6 +42,7 @@ fn build_native(manifest_dir: &Path) {
     match env::var("CARGO_CFG_TARGET_OS").ok().as_deref() {
         Some("macos") | Some("ios") => {
             build.cpp_link_stdlib("c++");
+            configure_apple_archiver(&mut build, manifest_dir);
         }
         Some("windows") => {
             build.cpp_link_stdlib(None::<&str>);
@@ -49,6 +53,22 @@ fn build_native(manifest_dir: &Path) {
     }
 
     build.compile("sealbot_ffi");
+}
+
+fn configure_apple_archiver(build: &mut cc::Build, manifest_dir: &Path) {
+    let wrapper = manifest_dir.join("scripts").join("apple-ar-wrapper.sh");
+
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&wrapper)
+            .unwrap_or_else(|error| panic!("could not stat {}: {error}", wrapper.display()))
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&wrapper, permissions)
+            .unwrap_or_else(|error| panic!("could not chmod {}: {error}", wrapper.display()));
+    }
+
+    build.archiver(wrapper);
 }
 
 fn build_wasm(manifest_dir: &Path) {

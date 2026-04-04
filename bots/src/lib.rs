@@ -9,7 +9,7 @@ mod seal_vendor;
 mod shared;
 
 use hex_tic_tac_engine::{Cube, Game};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
@@ -91,6 +91,147 @@ impl fmt::Display for BotName {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BotParams {
+    #[default]
+    None,
+    Kraken {
+        sims: usize,
+    },
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BotSpec {
+    pub name: BotName,
+    pub params: BotParams,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BotSpec {
+    #[must_use]
+    pub const fn new(name: BotName) -> Self {
+        Self {
+            name,
+            params: BotParams::None,
+        }
+    }
+
+    #[must_use]
+    pub const fn kraken_with_sims(sims: usize) -> Self {
+        Self {
+            name: BotName::Kraken,
+            params: BotParams::Kraken { sims },
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for BotSpec {
+    fn default() -> Self {
+        Self::new(BotName::Sprout)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<BotName> for BotSpec {
+    fn from(name: BotName) -> Self {
+        Self::new(name)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FromStr for BotSpec {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (name_text, params_text) = match value.split_once('@') {
+            Some((name, params)) => (name, Some(params)),
+            None => (value, None),
+        };
+
+        let name = BotName::from_str(name_text)?;
+        let mut spec = Self::from(name);
+
+        let Some(params_text) = params_text else {
+            return Ok(spec);
+        };
+        if params_text.trim().is_empty() {
+            return Err(format!("missing parameters for bot spec: {value}"));
+        }
+
+        match name {
+            BotName::Kraken => {
+                let mut sims = None;
+                for part in params_text.split(',') {
+                    let (key, raw_value) = part
+                        .split_once('=')
+                        .ok_or_else(|| format!("invalid bot parameter '{part}' in {value}"))?;
+                    let key = key.trim();
+                    let raw_value = raw_value.trim();
+                    match key {
+                        "sims" | "n_sims" => {
+                            if sims.is_some() {
+                                return Err(format!("duplicate sims parameter in {value}"));
+                            }
+                            let parsed = raw_value.parse::<usize>().map_err(|error| {
+                                format!("invalid sims value '{raw_value}': {error}")
+                            })?;
+                            if parsed == 0 {
+                                return Err("kraken sims must be at least 1".to_string());
+                            }
+                            sims = Some(parsed);
+                        }
+                        _ => {
+                            return Err(format!("unknown parameter '{key}' for bot {name}"));
+                        }
+                    }
+                }
+
+                if let Some(sims) = sims {
+                    spec.params = BotParams::Kraken { sims };
+                    Ok(spec)
+                } else {
+                    Err(format!("kraken bot specs must include sims=...: {value}"))
+                }
+            }
+            _ => Err(format!("bot {name} does not accept parameters: {value}")),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Display for BotSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.params {
+            BotParams::None => write!(f, "{}", self.name),
+            BotParams::Kraken { sims } => write!(f, "{}@sims={sims}", self.name),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Serialize for BotSpec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'de> Deserialize<'de> for BotSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_str(&value).map_err(serde::de::Error::custom)
+    }
+}
+
 pub fn choose_move(bot_name: BotName, game: &Game) -> Result<[Cube; 2], String> {
     let mut rng = shared::RuntimeRng::new();
     choose_move_with_rng(bot_name, game, &mut rng)
@@ -138,7 +279,28 @@ pub(crate) fn choose_move_with_rng<R: shared::IndexRng>(
         #[cfg(not(target_arch = "wasm32"))]
         BotName::Kraken => kraken::choose_kraken_move(game),
         #[cfg(target_arch = "wasm32")]
-        BotName::Kraken => Err("kraken is only available through the native bot service".to_string()),
+        BotName::Kraken => {
+            Err("kraken is only available through the native bot service".to_string())
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn choose_move_for_spec_with_rng<R: shared::IndexRng>(
+    spec: BotSpec,
+    game: &Game,
+    rng: &mut R,
+) -> Result<[Cube; 2], String> {
+    match spec {
+        BotSpec {
+            name: BotName::Kraken,
+            params: BotParams::Kraken { sims },
+        } => kraken::choose_kraken_move_with_sims(game, sims),
+        BotSpec {
+            name: BotName::Kraken,
+            params: BotParams::None,
+        } => kraken::choose_kraken_move(game),
+        BotSpec { name, .. } => choose_move_with_rng(name, game, rng),
     }
 }
 
@@ -163,7 +325,7 @@ pub fn list_bots_json() -> Result<String, JsValue> {
     serde_json::to_string(&BotListView {
         bots: BotName::ALL.to_vec(),
     })
-        .map_err(|error| JsValue::from_str(&error.to_string()))
+    .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 #[wasm_bindgen]
@@ -199,6 +361,25 @@ mod tests {
         assert_eq!(BotName::from_str("orca").unwrap(), BotName::Orca);
         assert_eq!(BotName::from_str("kraken").unwrap(), BotName::Kraken);
         assert!(BotName::from_str("abrosia").is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parses_bot_specs() {
+        assert_eq!(
+            BotSpec::from_str("hydra").unwrap(),
+            BotSpec::from(BotName::Hydra)
+        );
+        assert_eq!(
+            BotSpec::from_str("kraken@sims=400").unwrap(),
+            BotSpec::kraken_with_sims(400)
+        );
+        assert_eq!(
+            BotSpec::from_str("kraken@n_sims=800").unwrap(),
+            BotSpec::kraken_with_sims(800)
+        );
+        assert!(BotSpec::from_str("hydra@sims=10").is_err());
+        assert!(BotSpec::from_str("kraken@depth=4").is_err());
     }
 
     #[test]

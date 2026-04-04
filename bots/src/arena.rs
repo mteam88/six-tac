@@ -1,4 +1,4 @@
-use crate::{choose_move_with_rng, shared, BotName};
+use crate::{choose_move_for_spec_with_rng, shared, BotSpec};
 use hex_tic_tac_engine::{Game, Player};
 use rayon::prelude::*;
 use serde::Serialize;
@@ -6,8 +6,8 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct MatchConfig {
-    pub first: BotName,
-    pub second: BotName,
+    pub first: BotSpec,
+    pub second: BotSpec,
     pub games: usize,
     pub max_turns: usize,
     pub seed: u64,
@@ -15,7 +15,7 @@ pub struct MatchConfig {
 
 impl MatchConfig {
     #[must_use]
-    pub const fn new(first: BotName, second: BotName) -> Self {
+    pub const fn new(first: BotSpec, second: BotSpec) -> Self {
         Self {
             first,
             second,
@@ -56,8 +56,8 @@ impl Default for EloConfig {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct CompareConfig {
-    pub candidate: BotName,
-    pub baseline: BotName,
+    pub candidate: BotSpec,
+    pub baseline: BotSpec,
     pub max_games: usize,
     pub batch_size: usize,
     pub min_games: usize,
@@ -68,7 +68,7 @@ pub struct CompareConfig {
 
 impl CompareConfig {
     #[must_use]
-    pub const fn new(candidate: BotName, baseline: BotName) -> Self {
+    pub const fn new(candidate: BotSpec, baseline: BotSpec) -> Self {
         Self {
             candidate,
             baseline,
@@ -92,7 +92,7 @@ pub struct SeatRecord {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct BotRecord {
-    pub bot: BotName,
+    pub bot: BotSpec,
     pub wins: usize,
     pub losses: usize,
     pub unfinished: usize,
@@ -101,7 +101,7 @@ pub struct BotRecord {
 }
 
 impl BotRecord {
-    fn new(bot: BotName) -> Self {
+    fn new(bot: BotSpec) -> Self {
         Self {
             bot,
             wins: 0,
@@ -135,7 +135,7 @@ pub struct MatchSummary {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct EloStanding {
-    pub bot: BotName,
+    pub bot: BotSpec,
     pub rating: f64,
     pub wins: usize,
     pub losses: usize,
@@ -145,7 +145,7 @@ pub struct EloStanding {
 }
 
 impl EloStanding {
-    fn new(bot: BotName, initial_rating: f64) -> Self {
+    fn new(bot: BotSpec, initial_rating: f64) -> Self {
         Self {
             bot,
             rating: initial_rating,
@@ -160,8 +160,8 @@ impl EloStanding {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct EloMatchupSummary {
-    pub first: BotName,
-    pub second: BotName,
+    pub first: BotSpec,
+    pub second: BotSpec,
     pub wins_first: usize,
     pub wins_second: usize,
     pub unfinished: usize,
@@ -219,8 +219,8 @@ pub struct MatchProgress {
 pub struct EloProgress {
     pub completed_pairs: usize,
     pub total_pairs: usize,
-    pub first: BotName,
-    pub second: BotName,
+    pub first: BotSpec,
+    pub second: BotSpec,
     pub elapsed_ms: u128,
 }
 
@@ -253,11 +253,11 @@ pub struct FrontendGameSource {
     pub kind: &'static str,
     pub matchup: String,
     pub game_number: usize,
-    pub first_bot: BotName,
-    pub second_bot: BotName,
-    pub player_one_bot: BotName,
-    pub player_two_bot: BotName,
-    pub winner_bot: Option<BotName>,
+    pub first_bot: BotSpec,
+    pub second_bot: BotSpec,
+    pub player_one_bot: BotSpec,
+    pub player_two_bot: BotSpec,
+    pub winner_bot: Option<BotSpec>,
     pub winner_player: Option<Player>,
     pub finished: bool,
     pub max_turns: usize,
@@ -267,7 +267,7 @@ pub struct FrontendGameSource {
 
 #[derive(Clone, Copy, Debug)]
 enum GameOutcome {
-    Win { winner: BotName },
+    Win { winner: BotSpec },
     TurnLimit,
 }
 
@@ -324,7 +324,7 @@ fn progress_batch_games(total_games: usize) -> usize {
 }
 
 impl AggregateMatch {
-    fn new(candidate: BotName, baseline: BotName) -> Self {
+    fn new(candidate: BotSpec, baseline: BotSpec) -> Self {
         Self {
             candidate: BotRecord::new(candidate),
             baseline: BotRecord::new(baseline),
@@ -364,15 +364,18 @@ where
     F: FnMut(MatchProgress),
 {
     let (summary, runs) = run_match_internal(config, true, on_progress)?;
-    Ok((summary, export_frontend_games(runs, config, "harness_match", 0)))
+    Ok((
+        summary,
+        export_frontend_games(runs, config, "harness_match", 0),
+    ))
 }
 
-pub fn run_elo(bots: &[BotName], config: EloConfig) -> Result<EloSummary, String> {
+pub fn run_elo(bots: &[BotSpec], config: EloConfig) -> Result<EloSummary, String> {
     Ok(run_elo_internal(bots, config, false, |_| {})?.0)
 }
 
 pub fn run_elo_with_progress<F>(
-    bots: &[BotName],
+    bots: &[BotSpec],
     config: EloConfig,
     on_progress: F,
 ) -> Result<EloSummary, String>
@@ -383,14 +386,14 @@ where
 }
 
 pub fn run_elo_with_frontend_games(
-    bots: &[BotName],
+    bots: &[BotSpec],
     config: EloConfig,
 ) -> Result<(EloSummary, Vec<FrontendGameFile>), String> {
     run_elo_with_frontend_games_and_progress(bots, config, |_| {})
 }
 
 pub fn run_elo_with_frontend_games_and_progress<F>(
-    bots: &[BotName],
+    bots: &[BotSpec],
     config: EloConfig,
     on_progress: F,
 ) -> Result<(EloSummary, Vec<FrontendGameFile>), String>
@@ -472,7 +475,7 @@ where
 }
 
 fn run_elo_internal<F>(
-    bots: &[BotName],
+    bots: &[BotSpec],
     config: EloConfig,
     capture_games: bool,
     mut on_progress: F,
@@ -534,12 +537,7 @@ where
             });
 
             if capture_games {
-                exported_games.extend(export_frontend_games(
-                    runs,
-                    match_config,
-                    "harness_elo",
-                    0,
-                ));
+                exported_games.extend(export_frontend_games(runs, match_config, "harness_elo", 0));
             }
 
             completed_pairs += 1;
@@ -556,7 +554,7 @@ where
     standings.sort_by(|a, b| {
         b.rating
             .total_cmp(&a.rating)
-            .then_with(|| a.bot.as_str().cmp(b.bot.as_str()))
+            .then_with(|| a.bot.to_string().cmp(&b.bot.to_string()))
     });
 
     Ok((
@@ -835,7 +833,7 @@ fn validate_match_config(config: MatchConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_elo_config(bots: &[BotName], config: EloConfig) -> Result<(), String> {
+fn validate_elo_config(bots: &[BotSpec], config: EloConfig) -> Result<(), String> {
     if bots.len() < 2 {
         return Err("elo mode needs at least two bots".to_string());
     }
@@ -1064,9 +1062,9 @@ fn elo_from_score(score: f64) -> f64 {
 
 fn play_game(
     mut game: Game,
-    first_bot: BotName,
+    first_bot: BotSpec,
     first_seat: Player,
-    second_bot: BotName,
+    second_bot: BotSpec,
     second_seat: Player,
     max_turns: usize,
     seed: u64,
@@ -1083,7 +1081,7 @@ fn play_game(
             return Err("invalid seat assignment".to_string());
         };
 
-        let stones = choose_move_with_rng(active_bot, &game, &mut rng)?;
+        let stones = choose_move_for_spec_with_rng(active_bot, &game, &mut rng)?;
         if !game.is_legal(stones) {
             return Err(format!(
                 "{active_bot} produced an illegal move {:?} at turn {}",
@@ -1159,7 +1157,10 @@ mod tests {
         let summary = run_match(MatchConfig {
             games: 2,
             max_turns: 32,
-            ..MatchConfig::new(BotName::Seal, BotName::Ambrosia)
+            ..MatchConfig::new(
+                BotSpec::from(crate::BotName::Seal),
+                BotSpec::from(crate::BotName::Ambrosia),
+            )
         })
         .unwrap();
 
@@ -1173,8 +1174,8 @@ mod tests {
     #[test]
     fn compare_produces_a_verdict() {
         let summary = run_compare(CompareConfig {
-            candidate: BotName::Seal,
-            baseline: BotName::Sprout,
+            candidate: BotSpec::from(crate::BotName::Seal),
+            baseline: BotSpec::from(crate::BotName::Sprout),
             max_games: 20,
             batch_size: 5,
             min_games: 10,

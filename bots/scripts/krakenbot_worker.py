@@ -7,7 +7,9 @@ import os
 import signal
 import subprocess
 import sys
+from collections import OrderedDict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,22 +191,71 @@ def _patched_get_move(self, game) -> list[tuple[int, int]]:
 MCTSBot.get_move = _patched_get_move
 
 
-def build_game(game_json: str) -> HexGame:
-    payload = json.loads(game_json) if game_json.strip() else {"turns": []}
-    turns = payload.get("turns", [])
+Turn = tuple[tuple[int, int], tuple[int, int]]
 
+
+@dataclass
+class CachedGame:
+    game: HexGame
+    turns: list[Turn]
+
+
+def _new_game() -> HexGame:
     game = HexGame(win_length=6)
     if not game.make_move(0, 0):
         raise RuntimeError("failed to apply implied opening stone")
-
-    for turn in turns:
-        for stone in turn["stones"]:
-            q = int(stone["x"])
-            r = int(stone["z"])
-            if not game.make_move(q, r):
-                raise RuntimeError(f"illegal translated move in KrakenBot bridge: {(q, r)}")
-
     return game
+
+
+def _normalize_turns(request: dict) -> list[Turn]:
+    if "turns" in request:
+        raw_turns = request.get("turns") or []
+        turns: list[Turn] = []
+        for turn in raw_turns:
+            if len(turn) != 2:
+                raise RuntimeError(f"expected two stones per turn, got: {turn!r}")
+            stones = []
+            for stone in turn:
+                if len(stone) != 2:
+                    raise RuntimeError(f"expected axial stone pair, got: {stone!r}")
+                stones.append((int(stone[0]), int(stone[1])))
+            turns.append((stones[0], stones[1]))
+        return turns
+
+    game_json = request.get("game_json", "")
+    payload = json.loads(game_json) if str(game_json).strip() else {"turns": []}
+    turns = []
+    for turn in payload.get("turns", []):
+        stones = []
+        for stone in turn["stones"]:
+            stones.append((int(stone["x"]), int(stone["z"])))
+        if len(stones) != 2:
+            raise RuntimeError(f"expected two stones per turn, got: {stones!r}")
+        turns.append((stones[0], stones[1]))
+    return turns
+
+
+def _apply_turn(game: HexGame, turn: Turn) -> None:
+    for q, r in turn:
+        if not game.make_move(q, r):
+            raise RuntimeError(f"illegal translated move in KrakenBot bridge: {(q, r)}")
+
+
+def _build_game(turns: list[Turn]) -> HexGame:
+    game = _new_game()
+    for turn in turns:
+        _apply_turn(game, turn)
+    return game
+
+
+def _sync_cached_game(session: CachedGame | None, turns: list[Turn]) -> CachedGame:
+    if session is None or len(session.turns) > len(turns) or session.turns != turns[: len(session.turns)]:
+        return CachedGame(game=_build_game(turns), turns=list(turns))
+
+    for turn in turns[len(session.turns) :]:
+        _apply_turn(session.game, turn)
+        session.turns.append(turn)
+    return session
 
 
 def main() -> int:
@@ -224,6 +275,7 @@ def main() -> int:
 
     thread_count = int(os.environ.get("KRAKEN_TORCH_THREADS", "1" if device == "mps" else "0"))
     move_timeout_ms = int(os.environ.get("KRAKEN_MOVE_TIMEOUT_MS", "30000"))
+    max_cached_games = max(1, int(os.environ.get("KRAKEN_SESSION_CACHE_SIZE", "128")))
     if thread_count > 0:
         torch.set_num_threads(thread_count)
         try:
@@ -245,24 +297,43 @@ def main() -> int:
                 "model_path": model_path,
                 "n_sims": n_sims,
                 "torch_threads": thread_count if thread_count > 0 else None,
+                "session_cache_size": max_cached_games,
             }
         ),
         flush=True,
     )
 
+    sessions: OrderedDict[str, CachedGame] = OrderedDict()
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
+        cache_key: str | None = None
         try:
             request = json.loads(line)
+            turns = _normalize_turns(request)
+            cache_key = request.get("cache_key") or None
+            session: CachedGame | None = None
+            if cache_key is not None:
+                session = _sync_cached_game(sessions.get(cache_key), turns)
+                sessions[cache_key] = session
+                sessions.move_to_end(cache_key)
+                while len(sessions) > max_cached_games:
+                    sessions.popitem(last=False)
             with move_timeout(move_timeout_ms):
-                game = build_game(request["game_json"])
+                game = session.game if session is not None else _build_game(turns)
                 stones = bot.get_move(game)
             if len(stones) != 2:
                 raise RuntimeError(f"expected two stones from KrakenBot, got: {stones!r}")
-            response = {"stones": [[int(q), int(r)] for q, r in stones]}
+            move = ((int(stones[0][0]), int(stones[0][1])), (int(stones[1][0]), int(stones[1][1])))
+            if session is not None:
+                _apply_turn(session.game, move)
+                session.turns.append(move)
+            response = {"stones": [[q, r] for q, r in move]}
         except Exception as exc:
+            if cache_key is not None:
+                sessions.pop(cache_key, None)
             response = {"error": str(exc)}
         print(json.dumps(response), flush=True)
 

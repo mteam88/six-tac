@@ -125,7 +125,7 @@ mod native {
 mod wasm {
     use super::{decode_move, encode_state};
     use hex_tic_tac_engine::Game;
-    use js_sys::{JSON, Reflect};
+    use js_sys::{Reflect, JSON};
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen(module = "/src/seal_vendor_bridge.js")]
@@ -162,7 +162,8 @@ mod wasm {
         let state = encode_state(game)?;
         let state_json = serde_json::to_string(&state).map_err(|error| error.to_string())?;
         let raw = choose_sealbot_move(&state_json).map_err(describe_js_error)?;
-        let move_data = serde_json::from_str::<Vec<i32>>(&raw).map_err(|error| error.to_string())?;
+        let move_data =
+            serde_json::from_str::<Vec<i32>>(&raw).map_err(|error| error.to_string())?;
         decode_move(&move_data)
     }
 }

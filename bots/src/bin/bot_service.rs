@@ -44,7 +44,8 @@ mod native {
     }
 
     fn run() -> Result<(), String> {
-        let address = std::env::var("BOT_SERVICE_ADDR").unwrap_or_else(|_| "127.0.0.1:8788".to_string());
+        let address =
+            std::env::var("BOT_SERVICE_ADDR").unwrap_or_else(|_| "127.0.0.1:8788".to_string());
         let server = Server::http(&address).map_err(|error| error.to_string())?;
         eprintln!("six-tac bot service listening on http://{address}");
         for mut request in server.incoming_requests() {
@@ -58,7 +59,8 @@ mod native {
                         .map(|bot_name| BotListEntry {
                             name: bot_name,
                             version: if bot_name == BotName::Kraken {
-                                std::env::var("KRAKEN_MODEL_VERSION").unwrap_or_else(|_| "kraken_v1".to_string())
+                                std::env::var("KRAKEN_MODEL_VERSION")
+                                    .unwrap_or_else(|_| "kraken_v1".to_string())
                             } else {
                                 "builtin".to_string()
                             },
@@ -87,7 +89,8 @@ mod native {
                 .as_reader()
                 .read_to_string(&mut body)
                 .map_err(|error| error.to_string())?;
-            let payload = serde_json::from_str::<MoveRequest>(&body).map_err(|error| error.to_string())?;
+            let payload =
+                serde_json::from_str::<MoveRequest>(&body).map_err(|error| error.to_string())?;
             let bot_name = BotName::from_str(&payload.bot_name)?;
             let game = if payload.game_json.trim().is_empty() {
                 Game::new()
@@ -102,14 +105,19 @@ mod native {
         match result {
             Ok(payload) => json_response(&payload),
             Err(error) => json_error(
-                if is_timeout_error(&error) { StatusCode(504) } else { StatusCode(400) },
+                if is_timeout_error(&error) {
+                    StatusCode(504)
+                } else {
+                    StatusCode(400)
+                },
                 &error,
             ),
         }
     }
 
     fn json_response<T: Serialize>(value: &T) -> Response<std::io::Cursor<Vec<u8>>> {
-        let body = serde_json::to_vec(value).unwrap_or_else(|_| b"{\"error\":\"serialization failed\"}".to_vec());
+        let body = serde_json::to_vec(value)
+            .unwrap_or_else(|_| b"{\"error\":\"serialization failed\"}".to_vec());
         let mut response = Response::from_data(body).with_status_code(StatusCode(200));
         response.add_header(json_header());
         response
@@ -133,8 +141,11 @@ mod native {
     }
 
     fn json_header() -> Header {
-        Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..])
-            .expect("valid json header")
+        Header::from_bytes(
+            &b"Content-Type"[..],
+            &b"application/json; charset=utf-8"[..],
+        )
+        .expect("valid json header")
     }
 }
 

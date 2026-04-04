@@ -12,7 +12,7 @@ mod native {
         run_compare_with_progress, run_elo, run_elo_with_frontend_games,
         run_elo_with_frontend_games_and_progress, run_elo_with_progress, run_match,
         run_match_with_frontend_games, run_match_with_frontend_games_and_progress,
-        run_match_with_progress, BotName, CompareConfig, CompareProgress, CompareSummary,
+        run_match_with_progress, BotName, BotSpec, CompareConfig, CompareProgress, CompareSummary,
         EloConfig, EloProgress, EloSummary, FrontendGameFile, MatchConfig, MatchProgress,
         MatchSummary, SeatRecord,
     };
@@ -54,11 +54,11 @@ mod native {
 
     fn run_match_command(args: &[String]) -> Result<(), String> {
         if args.len() < 2 {
-            return Err("expected two bot names".to_string());
+            return Err("expected two bot specs".to_string());
         }
 
         let mut config =
-            MatchConfig::new(BotName::from_str(&args[0])?, BotName::from_str(&args[1])?);
+            MatchConfig::new(BotSpec::from_str(&args[0])?, BotSpec::from_str(&args[1])?);
         let mut json = false;
         let mut export_dir = None;
         let mut index = 2;
@@ -96,17 +96,17 @@ mod native {
 
     fn run_elo_command(args: &[String]) -> Result<(), String> {
         if args.is_empty() {
-            return Err("expected at least two bot names, or 'all'".to_string());
+            return Err("expected at least two bot specs, or 'all'".to_string());
         }
 
         let mut bots = Vec::new();
         let mut index = 0;
         if args[0] == "all" {
-            bots.extend(BotName::ALL);
+            bots.extend(BotName::ALL.into_iter().map(BotSpec::from));
             index = 1;
         } else {
             while index < args.len() && !args[index].starts_with('-') {
-                bots.push(BotName::from_str(&args[index])?);
+                bots.push(BotSpec::from_str(&args[index])?);
                 index += 1;
             }
         }
@@ -151,11 +151,11 @@ mod native {
 
     fn run_compare_command(args: &[String]) -> Result<(), String> {
         if args.len() < 2 {
-            return Err("expected candidate and baseline bot names".to_string());
+            return Err("expected candidate and baseline bot specs".to_string());
         }
 
         let mut config =
-            CompareConfig::new(BotName::from_str(&args[0])?, BotName::from_str(&args[1])?);
+            CompareConfig::new(BotSpec::from_str(&args[0])?, BotSpec::from_str(&args[1])?);
         let mut json = false;
         let mut export_dir = None;
         let mut index = 2;
@@ -411,7 +411,7 @@ mod native {
         println!("  {:<10} {}", "unfinished", summary.unfinished_games);
     }
 
-    fn print_seat_line(bot: BotName, seat: &str, record: SeatRecord) {
+    fn print_seat_line(bot: BotSpec, seat: &str, record: SeatRecord) {
         println!(
             "  {:<10} as {:<10} games {:>4} | wins {:>4} | losses {:>4} | unfinished {:>4}",
             bot, seat, record.games, record.wins, record.losses, record.unfinished
@@ -426,10 +426,15 @@ mod native {
   cargo run --manifest-path bots/Cargo.toml --bin harness -- elo <bot-a> <bot-b> <bot-c>... [--games N] [--max-turns N] [--seed N] [--k-factor N] [--export-dir DIR] [--json]
   cargo run --manifest-path bots/Cargo.toml --bin harness -- compare <candidate> <baseline> [--games N] [--batch-size N] [--min-games N] [--max-turns N] [--seed N] [--confidence-z N] [--export-dir DIR] [--json]
 
+Bot specs:
+  hydra
+  kraken@sims=200
+  kraken@sims=800
+
 Examples:
   cargo run --manifest-path bots/Cargo.toml --bin harness -- match hydra seal --games 1000 --export-dir out/games
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo all --games 200 --export-dir out/elo-games
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare hydra seal --games 1000 --batch-size 100 --min-games 200 --export-dir out/compare-games"
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo hydra kraken@sims=200 kraken@sims=800 --games 200 --export-dir out/elo-games
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare kraken@sims=400 kraken@sims=800 --games 1000 --batch-size 100 --min-games 200"
     }
 }
 

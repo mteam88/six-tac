@@ -101,10 +101,17 @@ Run ELO for all bots:
 cargo run --release --manifest-path bots/Cargo.toml --bin harness -- elo all --games 200
 ```
 
+The harness also accepts configured bot specs, so you can rate parameter variants separately:
+
+```bash
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- elo hydra kraken@sims=200 kraken@sims=800 --games 200
+```
+
 Run a head-to-head comparison with confidence bounds:
 
 ```bash
 cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare orca seal --games 1000 --batch-size 100 --min-games 200
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare kraken@sims=400 kraken@sims=800 --games 1000 --batch-size 100 --min-games 200
 ```
 
 Export finished games in the frontend import format:

@@ -80,7 +80,7 @@ export class SettingsModal {
       settingsSaveButton.textContent = "Create";
     } else if (mode === "bot") {
       settingsTitle.textContent = "Play bot";
-      settingsHint.textContent = this.availableBots.map((bot) => `${bot.label}: ${bot.description}`).join(" ");
+      settingsHint.replaceChildren(this.buildBotHintContent());
       settingsSaveButton.textContent = "Play";
       const availableBotNames = this.availableBots.map((bot) => bot.name);
       this.elements.settingsBotSelect.value = availableBotNames.includes(settings.botName)
@@ -107,6 +107,49 @@ export class SettingsModal {
     this.elements.settingsBotSelect.innerHTML = this.availableBots
       .map((bot) => `<option value="${bot.name}">${bot.label}</option>`)
       .join("");
+  }
+
+  private buildBotHintContent(): DocumentFragment {
+    const fragment = document.createDocumentFragment();
+    this.availableBots.forEach((bot, index) => {
+      if (index > 0) {
+        fragment.append(" ");
+      }
+      fragment.append(`${bot.label}: `);
+      this.appendBotDescription(fragment, bot);
+    });
+    return fragment;
+  }
+
+  private appendBotDescription(fragment: DocumentFragment, bot: BotCatalogEntry): void {
+    switch (bot.name) {
+      case "seal":
+        fragment.append("Vendored ");
+        fragment.append(this.createExternalLink("Ramora0/SealBot", "https://github.com/Ramora0/SealBot"));
+        fragment.append(" minimax via the upstream engine bridge.");
+        return;
+      case "ambrosia":
+        fragment.append("Feature-weighted heuristic search inspired by ");
+        fragment.append(this.createExternalLink("trueharuu/Ambrosia", "https://github.com/trueharuu/Ambrosia"));
+        fragment.append(".");
+        return;
+      case "kraken":
+        fragment.append("Hosted ");
+        fragment.append(this.createExternalLink("Ramora0/KrakenBot", "https://github.com/Ramora0/KrakenBot"));
+        fragment.append(" neural MCTS from the native Rust + Python runtime.");
+        return;
+      default:
+        fragment.append(bot.description);
+    }
+  }
+
+  private createExternalLink(label: string, href: string): HTMLAnchorElement {
+    const link = document.createElement("a");
+    link.href = href;
+    link.target = "_blank";
+    link.rel = "noreferrer noopener";
+    link.textContent = label;
+    return link;
   }
 
   private setClockFields(enabled: boolean, baseSeconds: number, incrementSeconds: number): void {

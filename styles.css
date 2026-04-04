@@ -235,6 +235,17 @@ input::placeholder {
   line-height: 1.45;
 }
 
+.settings-hint a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.settings-hint a:hover {
+  color: var(--text);
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
