@@ -17,6 +17,8 @@ bool in_bounds(int q, int r) {
 
 opt::MinimaxBot make_bot() {
     opt::MinimaxBot bot(0.05);
+    bot.max_depth = 3;
+    bot.max_nodes = 50000;
     std::vector<double> patterns(PATTERN_VALUES, PATTERN_VALUES + PATTERN_COUNT);
     bot.load_patterns(patterns, PATTERN_EVAL_LENGTH);
     return bot;

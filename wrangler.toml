@@ -3,6 +3,10 @@ main = "src/worker.ts"
 compatibility_date = "2026-04-02"
 workers_dev = true
 
+[observability.logs]
+enabled = true
+invocation_logs = true
+
 [[routes]]
 pattern = "6-tac.com"
 custom_domain = true
