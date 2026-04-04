@@ -250,6 +250,18 @@ pub fn choose_move_cached(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub fn choose_move_cached_peek(
+    bot_name: BotName,
+    game: &Game,
+    cache_key: Option<&str>,
+) -> Result<[Cube; 2], String> {
+    match bot_name {
+        BotName::Kraken => kraken::choose_kraken_move_cached_peek(game, cache_key),
+        _ => choose_move(bot_name, game),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn choose_move_uncached(bot_name: BotName, game: &Game) -> Result<[Cube; 2], String> {
     match bot_name {
         BotName::Kraken => kraken::choose_kraken_move_uncached(game),

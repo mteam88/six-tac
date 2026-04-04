@@ -6,22 +6,25 @@ fn main() {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use hex_tic_tac_engine::Game;
+    use hex_tic_tac_engine::{Game, TurnList};
     use serde::Serialize;
-    use six_tac_bots::{choose_move_cached, choose_move_uncached, BotName};
+    use six_tac_bots::{choose_move_cached_peek, choose_move_uncached, BotName};
     use std::env;
+    use std::fs;
+    use std::path::{Path, PathBuf};
     use std::str::FromStr;
     use std::time::Instant;
 
-    const DEFAULT_MAX_TURNS: usize = 512;
-    const DEFAULT_CACHE_KEY: &str = "kraken-bench-session";
+    const DEFAULT_CACHE_KEY: &str = "kraken-bench-game";
+    const DEFAULT_GAME_JSON_PATH: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/kraken/bench-game.json");
 
     #[derive(Serialize)]
     struct SampleResult {
         iteration: usize,
-        turns: usize,
+        positions: usize,
         ms: f64,
-        ms_per_turn: f64,
+        ms_per_position: f64,
     }
 
     #[derive(Serialize)]
@@ -39,11 +42,12 @@ mod native {
         cached: bool,
         warmup_iterations: usize,
         iterations: usize,
-        turn_limit: usize,
+        game_json_path: String,
+        explicit_turns: usize,
+        total_stones: usize,
         samples: Vec<SampleResult>,
         total_ms: Stats,
-        ms_per_turn: Stats,
-        average_turns: f64,
+        ms_per_position: Stats,
     }
 
     pub fn main() {
@@ -59,8 +63,9 @@ mod native {
         let mut iterations = 5usize;
         let mut warmup_iterations = 1usize;
         let mut cached = true;
-        let mut turn_limit = DEFAULT_MAX_TURNS;
         let mut json = false;
+        let mut game_json_path = PathBuf::from(DEFAULT_GAME_JSON_PATH);
+        let mut inline_game_json: Option<String> = None;
 
         let mut index = 0;
         while index < args.len() {
@@ -95,66 +100,69 @@ mod native {
                     cached = false;
                     index += 1;
                 }
-                "--max-turns" => {
+                "--game-json-file" => {
                     index += 1;
-                    turn_limit = args
-                        .get(index)
-                        .ok_or_else(|| "missing value for --max-turns".to_string())?
-                        .parse::<usize>()
-                        .map_err(|error| format!("invalid --max-turns: {error}"))?;
+                    game_json_path = PathBuf::from(
+                        args.get(index)
+                            .ok_or_else(|| "missing value for --game-json-file".to_string())?,
+                    );
+                    index += 1;
+                }
+                "--game-json" => {
+                    index += 1;
+                    inline_game_json = Some(
+                        args.get(index)
+                            .ok_or_else(|| "missing value for --game-json".to_string())?
+                            .to_string(),
+                    );
                     index += 1;
                 }
                 "--json" => {
                     json = true;
                     index += 1;
                 }
-                other => {
-                    return Err(format!("unrecognized flag: {other}"));
-                }
+                other => return Err(format!("unrecognized flag: {other}")),
             }
         }
 
         if iterations == 0 {
             return Err("--iterations must be at least 1".to_string());
         }
-        if turn_limit == 0 {
-            return Err("--max-turns must be at least 1".to_string());
+
+        let (turn_list, game_source) = load_turn_list(inline_game_json, &game_json_path)?;
+        if turn_list.turns.is_empty() {
+            return Err("benchmark game must include at least one explicit turn".to_string());
         }
 
         for _ in 0..warmup_iterations {
-            let _ = play_self_game(bot, cached, turn_limit)?;
+            let _ = play_reference_game(bot, &turn_list, cached)?;
         }
 
         let mut samples = Vec::with_capacity(iterations);
         for iteration in 0..iterations {
-            let (turns, ms) = play_self_game(bot, cached, turn_limit)?;
+            let (positions, ms) = play_reference_game(bot, &turn_list, cached)?;
             samples.push(SampleResult {
                 iteration,
-                turns,
+                positions,
                 ms,
-                ms_per_turn: ms / turns.max(1) as f64,
+                ms_per_position: ms / positions.max(1) as f64,
             });
         }
 
         let total_ms = stats(samples.iter().map(|sample| sample.ms));
-        let ms_per_turn = stats(samples.iter().map(|sample| sample.ms_per_turn));
-        let average_turns = samples
-            .iter()
-            .map(|sample| sample.turns as f64)
-            .sum::<f64>()
-            / samples.len() as f64;
-
+        let ms_per_position = stats(samples.iter().map(|sample| sample.ms_per_position));
         let result = BenchResult {
             bot,
-            mode: "self-play",
+            mode: "reference-game-prefixes",
             cached,
             warmup_iterations,
             iterations,
-            turn_limit,
+            game_json_path: game_source,
+            explicit_turns: turn_list.turns.len(),
+            total_stones: 1 + turn_list.turns.len() * 2,
             samples,
             total_ms,
-            ms_per_turn,
-            average_turns,
+            ms_per_position,
         };
 
         if json {
@@ -168,8 +176,9 @@ mod native {
             println!("cached: {}", result.cached);
             println!("warmup iterations: {}", result.warmup_iterations);
             println!("iterations: {}", result.iterations);
-            println!("turn limit: {}", result.turn_limit);
-            println!("avg turns: {:.2}", result.average_turns);
+            println!("game json: {}", result.game_json_path);
+            println!("explicit turns: {}", result.explicit_turns);
+            println!("total stones: {}", result.total_stones);
             println!(
                 "total ms: min {:.3} | median {:.3} | mean {:.3} | max {:.3}",
                 result.total_ms.min,
@@ -178,18 +187,21 @@ mod native {
                 result.total_ms.max
             );
             println!(
-                "ms/turn: min {:.3} | median {:.3} | mean {:.3} | max {:.3}",
-                result.ms_per_turn.min,
-                result.ms_per_turn.median,
-                result.ms_per_turn.mean,
-                result.ms_per_turn.max
+                "ms/position: min {:.3} | median {:.3} | mean {:.3} | max {:.3}",
+                result.ms_per_position.min,
+                result.ms_per_position.median,
+                result.ms_per_position.mean,
+                result.ms_per_position.max
             );
             println!("METRIC median_ms={:.6}", result.total_ms.median);
-            println!("METRIC mean_ms_per_turn={:.6}", result.ms_per_turn.mean);
+            println!(
+                "METRIC mean_ms_per_position={:.6}",
+                result.ms_per_position.mean
+            );
             for sample in result.samples {
                 println!(
-                    "  [{}] turns={} total={:.3} ms per_turn={:.3} ms",
-                    sample.iteration, sample.turns, sample.ms, sample.ms_per_turn
+                    "  [{}] positions={} total={:.3} ms per_position={:.3} ms",
+                    sample.iteration, sample.positions, sample.ms, sample.ms_per_position
                 );
             }
         }
@@ -197,26 +209,43 @@ mod native {
         Ok(())
     }
 
-    fn play_self_game(
+    fn load_turn_list(
+        inline_game_json: Option<String>,
+        game_json_path: &Path,
+    ) -> Result<(TurnList, String), String> {
+        let (json, source) = match inline_game_json {
+            Some(json) => (json, "inline --game-json".to_string()),
+            None => (
+                fs::read_to_string(game_json_path).map_err(|error| {
+                    format!("could not read {}: {error}", game_json_path.display())
+                })?,
+                game_json_path.display().to_string(),
+            ),
+        };
+        let turn_list = TurnList::from_json_str(&json).map_err(|error| error.to_string())?;
+        Ok((turn_list, source))
+    }
+
+    fn play_reference_game(
         bot: BotName,
+        turn_list: &TurnList,
         cached: bool,
-        turn_limit: usize,
     ) -> Result<(usize, f64), String> {
         let mut game = Game::new();
         let start = Instant::now();
 
-        while !game.is_over() && game.turn_count() < turn_limit as u32 {
-            let stones = if cached {
-                choose_move_cached(bot, &game, Some(DEFAULT_CACHE_KEY))?
+        for turn in turn_list.turns.iter().copied() {
+            let _ = if cached {
+                choose_move_cached_peek(bot, &game, Some(DEFAULT_CACHE_KEY))?
             } else {
                 choose_move_uncached(bot, &game)?
             };
-            game.play(stones)
-                .map_err(|error| format!("{bot} move failed to apply: {error}"))?;
+            game.play(turn.stones)
+                .map_err(|error| format!("failed to apply reference turn: {error}"))?;
         }
 
         Ok((
-            game.turn_count() as usize,
+            turn_list.turns.len(),
             start.elapsed().as_secs_f64() * 1000.0,
         ))
     }

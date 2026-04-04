@@ -27,6 +27,7 @@ struct WorkerRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_key: Option<&'a str>,
     base_turn_index: usize,
+    advance_session: bool,
 }
 
 #[derive(Deserialize)]
@@ -129,7 +130,12 @@ impl KrakenWorker {
         Ok(worker)
     }
 
-    fn choose_move(&mut self, game: &Game, cache_key: Option<&str>) -> Result<[Cube; 2], String> {
+    fn choose_move(
+        &mut self,
+        game: &Game,
+        cache_key: Option<&str>,
+        advance_session: bool,
+    ) -> Result<[Cube; 2], String> {
         let current_turns = game
             .turns()
             .map(|turn| {
@@ -155,6 +161,7 @@ impl KrakenWorker {
             turns,
             cache_key,
             base_turn_index,
+            advance_session,
         })
         .map_err(|error| error.to_string())?;
         self.stdin
@@ -185,10 +192,12 @@ impl KrakenWorker {
         }
         if let Some(key) = cache_key {
             let mut next_turns = current_turns;
-            next_turns.push(stones.map(|stone| {
-                let (q, r) = stone.axial();
-                [q, r]
-            }));
+            if advance_session {
+                next_turns.push(stones.map(|stone| {
+                    let (q, r) = stone.axial();
+                    [q, r]
+                }));
+            }
             self.sessions.insert(key.to_string(), next_turns);
         }
         Ok(stones)
@@ -283,6 +292,13 @@ pub(crate) fn choose_kraken_move(game: &Game) -> Result<[Cube; 2], String> {
     choose_kraken_move_cached(game, None)
 }
 
+pub(crate) fn choose_kraken_move_cached_peek(
+    game: &Game,
+    cache_key: Option<&str>,
+) -> Result<[Cube; 2], String> {
+    choose_kraken_move_cached_with_sims_and_mode(game, cache_key, None, false)
+}
+
 pub(crate) fn choose_kraken_move_with_sims(game: &Game, sims: usize) -> Result<[Cube; 2], String> {
     choose_kraken_move_cached_with_sims(game, None, Some(sims))
 }
@@ -305,13 +321,22 @@ pub(crate) fn choose_kraken_move_uncached_with_sims(
     let _ = sims;
     let config = resolve_worker_config(sims)?;
     let mut worker = KrakenWorker::spawn(&config)?;
-    worker.choose_move(game, None)
+    worker.choose_move(game, None, true)
 }
 
 pub(crate) fn choose_kraken_move_cached_with_sims(
     game: &Game,
     cache_key: Option<&str>,
     sims: Option<usize>,
+) -> Result<[Cube; 2], String> {
+    choose_kraken_move_cached_with_sims_and_mode(game, cache_key, sims, true)
+}
+
+fn choose_kraken_move_cached_with_sims_and_mode(
+    game: &Game,
+    cache_key: Option<&str>,
+    sims: Option<usize>,
+    advance_session: bool,
 ) -> Result<[Cube; 2], String> {
     let config = resolve_worker_config(sims)?;
     WORKERS.with(|slot| {
@@ -321,7 +346,7 @@ pub(crate) fn choose_kraken_move_cached_with_sims(
                 slot.insert(config.clone(), KrakenWorker::spawn(&config));
             }
             match slot.get_mut(&config).expect("kraken worker initialized") {
-                Ok(worker) => match worker.choose_move(game, cache_key) {
+                Ok(worker) => match worker.choose_move(game, cache_key, advance_session) {
                     Ok(stones) => return Ok(stones),
                     Err(_error) if attempt == 0 => {
                         slot.remove(&config);

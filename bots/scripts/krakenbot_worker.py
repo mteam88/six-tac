@@ -327,6 +327,7 @@ def main() -> int:
             turns = _normalize_turns(request)
             cache_key = request.get("cache_key") or None
             base_turn_index = int(request.get("base_turn_index", 0))
+            advance_session = bool(request.get("advance_session", True))
             session: CachedGame | None = None
             if cache_key is not None:
                 if base_turn_index > 0:
@@ -353,7 +354,7 @@ def main() -> int:
             if len(stones) != 2:
                 raise RuntimeError(f"expected two stones from KrakenBot, got: {stones!r}")
             move = ((int(stones[0][0]), int(stones[0][1])), (int(stones[1][0]), int(stones[1][1])))
-            if session is not None:
+            if session is not None and advance_session:
                 _apply_turn(session.game, move)
                 session.turns.append(move)
             response = {"stones": [[q, r] for q, r in move]}
