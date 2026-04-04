@@ -27,6 +27,12 @@ const DEFAULT_SETTINGS: LobbySettings = {
   matchmakingClock: null,
 };
 
+function sanitizeBotName(botName: BotName | undefined): BotName {
+  return botName === "seal" || botName === "ambrosia" || botName === "hydra" || botName === "orca" || botName === "sprout"
+    ? botName
+    : "sprout";
+}
+
 export function loadSettings(): LobbySettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -48,6 +54,7 @@ export function loadSettings(): LobbySettings {
       localClock: parsed.localClock ?? (legacyLocalInitialMs ? { initialMs: legacyLocalInitialMs, incrementMs: 0 } : null),
       privateClock: parsed.privateClock ?? (parsed.privateClockTurnMs ? { initialMs: parsed.privateClockTurnMs, incrementMs: 0 } : null),
       botClock: parsed.botClock ?? (parsed.botClockTurnMs ? { initialMs: parsed.botClockTurnMs, incrementMs: 0 } : null),
+      botName: sanitizeBotName(parsed.botName),
       matchmakingClock: parsed.matchmakingClock ?? (parsed.matchmakingClockTurnMs ? { initialMs: parsed.matchmakingClockTurnMs, incrementMs: 0 } : null),
     };
   } catch {

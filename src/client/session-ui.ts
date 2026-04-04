@@ -6,7 +6,6 @@ import { finishLocalClockIfExpired } from "./local-game.js";
 export function currentSessionLabel(session: AppState["session"]): string {
   if (!session) return "—";
   if (session.mode === "local") return "local";
-  if (session.mode === "review") return "review";
   if (session.code) return formatRoomCode(session.code);
   return session.mode === "bot" ? "bot" : session.mode === "matchmade" ? "match" : "game";
 }
@@ -31,7 +30,6 @@ export function updateControls(state: AppState, elements: AppElements): boolean 
   const session = state.session;
   if (!session) {
     elements.bottomBar.classList.add("hidden");
-    elements.reviewPanel.classList.add("hidden");
     return false;
   }
 
@@ -49,22 +47,6 @@ export function updateControls(state: AppState, elements: AppElements): boolean 
     elements.turnPill.textContent = "waiting for opponent";
   } else {
     elements.turnPill.textContent = session.currentPlayer === "One" ? "red to move" : "blue to move";
-  }
-
-  if (state.review && session.mode === "review") {
-    elements.reviewPanel.classList.remove("hidden");
-    elements.reviewTitle.textContent = state.review.title;
-    elements.reviewStatus.textContent = `Turn ${state.review.index} / ${Math.max(0, state.review.history.length - 1)}`;
-    elements.reviewStartButton.disabled = state.review.index <= 0;
-    elements.reviewPrevButton.disabled = state.review.index <= 0;
-    elements.reviewNextButton.disabled = state.review.index >= state.review.history.length - 1;
-    elements.reviewEndButton.disabled = state.review.index >= state.review.history.length - 1;
-  } else {
-    elements.reviewPanel.classList.add("hidden");
-    elements.reviewStartButton.disabled = true;
-    elements.reviewPrevButton.disabled = true;
-    elements.reviewNextButton.disabled = true;
-    elements.reviewEndButton.disabled = true;
   }
 
   if (session.clock?.enabled) {

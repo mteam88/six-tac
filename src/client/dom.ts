@@ -5,8 +5,6 @@ export type AppElements = {
   localModeButton: HTMLButtonElement;
   createRoomButton: HTMLButtonElement;
   playBotButton: HTMLButtonElement;
-  importGameButton: HTMLButtonElement;
-  importGameInput: HTMLInputElement;
   findMatchButton: HTMLButtonElement;
   joinRoomButton: HTMLButtonElement;
   joinCodeInput: HTMLInputElement;
@@ -19,13 +17,6 @@ export type AppElements = {
   clockTwoCard: HTMLDivElement;
   clockOneTime: HTMLSpanElement;
   clockTwoTime: HTMLSpanElement;
-  reviewPanel: HTMLDivElement;
-  reviewTitle: HTMLSpanElement;
-  reviewStatus: HTMLSpanElement;
-  reviewStartButton: HTMLButtonElement;
-  reviewPrevButton: HTMLButtonElement;
-  reviewNextButton: HTMLButtonElement;
-  reviewEndButton: HTMLButtonElement;
   leaveRoomButton: HTMLButtonElement;
   submitTurnButton: HTMLButtonElement;
   submitLabel: HTMLSpanElement;
@@ -61,8 +52,6 @@ export function getAppElements(): AppElements {
     localModeButton: requiredElement("local-mode-button"),
     createRoomButton: requiredElement("create-room-button"),
     playBotButton: requiredElement("play-bot-button"),
-    importGameButton: requiredElement("import-game-button"),
-    importGameInput: requiredElement("import-game-input"),
     findMatchButton: requiredElement("find-match-button"),
     joinRoomButton: requiredElement("join-room-button"),
     joinCodeInput: requiredElement("join-code-input"),
@@ -75,13 +64,6 @@ export function getAppElements(): AppElements {
     clockTwoCard: requiredElement("clock-two"),
     clockOneTime: requiredElement("clock-one-time"),
     clockTwoTime: requiredElement("clock-two-time"),
-    reviewPanel: requiredElement("review-panel"),
-    reviewTitle: requiredElement("review-title"),
-    reviewStatus: requiredElement("review-status"),
-    reviewStartButton: requiredElement("review-start-button"),
-    reviewPrevButton: requiredElement("review-prev-button"),
-    reviewNextButton: requiredElement("review-next-button"),
-    reviewEndButton: requiredElement("review-end-button"),
     leaveRoomButton: requiredElement("leave-room-button"),
     submitTurnButton: requiredElement("submit-turn-button"),
     submitLabel: requiredElement("submit-label"),

@@ -348,7 +348,8 @@ export class SessionObject extends DurableObject<Env> {
 
       return json({ error: "Not found" }, 404);
     } catch (error) {
-      return json({ error: error instanceof Error ? error.message : "Unknown error" }, 400);
+      console.error("SessionObject error", error);
+      return json({ error: typeof error === "string" ? error : error instanceof Error ? error.message : "Unknown error" }, 400);
     }
   }
 

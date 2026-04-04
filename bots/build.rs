@@ -68,6 +68,8 @@ fn build_wasm(manifest_dir: &Path) {
         .args(["-s", "ALLOW_MEMORY_GROWTH=1"])
         .args(["-s", "DISABLE_EXCEPTION_CATCHING=0"])
         .args(["-s", "ENVIRONMENT=web,worker"])
+        .args(["-s", "STACK_SIZE=5242880"])
+        .args(["-s", "INITIAL_MEMORY=134217728"])
         .args(["-s", "EXPORT_ES6=1"])
         .args(["-s", "FILESYSTEM=0"])
         .args(["-s", "MODULARIZE=1"])

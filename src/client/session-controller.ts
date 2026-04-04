@@ -21,7 +21,6 @@ import {
 import { loadLocalGame, loadSession, POLL_INTERVAL_MS, saveLocalGame, saveSession } from "./persistence.js";
 import type { BoardRenderer } from "./render.js";
 import { updateControls } from "./session-ui.js";
-import { buildReviewSession, parseFrontendGameFile, validateReviewState } from "./review.js";
 import { ROOM_QUERY_PARAM } from "../domain/types.js";
 import type { Cube, SessionRef, SessionView } from "../domain/types.js";
 
@@ -35,9 +34,6 @@ export function createSessionController(options: {
 
   const setLobbyError = (message: string): void => {
     elements.lobbyError.textContent = message;
-  };
-  const clearReview = (): void => {
-    state.review = null;
   };
   const updateRoomUrl = (code: string | null): void => {
     const url = new URL(window.location.href);
@@ -66,7 +62,6 @@ export function createSessionController(options: {
       elements.localModeButton,
       elements.createRoomButton,
       elements.playBotButton,
-      elements.importGameButton,
       elements.joinRoomButton,
     ]) {
       button.disabled = state.matchmakingQueued;
@@ -97,7 +92,6 @@ export function createSessionController(options: {
 
   const showLobby = (message: string, roomCode = ""): void => {
     state.session = null;
-    clearReview();
     state.selected = [];
     state.recentHighlights = [];
     elements.copyRoomButton.dataset.player = "";
@@ -155,20 +149,6 @@ export function createSessionController(options: {
   };
   const updateHovered = (x: number, y: number): void => {
     state.hovered = renderer.screenToCube(x, y);
-  };
-
-  const setReviewTurn = (turnIndex: number): void => {
-    if (!state.review) return;
-    const nextIndex = Math.max(0, Math.min(state.review.history.length - 1, Number.isFinite(turnIndex) ? Math.round(turnIndex) : state.review.history.length - 1));
-    if (nextIndex === state.review.index && state.session?.mode === "review") return;
-    state.review.index = nextIndex;
-    state.selected = [];
-    applySession(buildReviewSession(localBindings, state.review));
-  };
-
-  const stepReview = (delta: number): void => {
-    if (!state.review) return;
-    setReviewTurn(state.review.index + delta);
   };
 
   const startPolling = (): void => {
@@ -248,7 +228,6 @@ export function createSessionController(options: {
 
   const startLocalGameFlow = async (): Promise<void> => {
     setLobbyError("");
-    clearReview();
     persistSession(null);
     const saved = loadLocalGame();
     if (saved) {
@@ -271,21 +250,18 @@ export function createSessionController(options: {
 
   const createPrivateRoomFlow = async (): Promise<void> => {
     setLobbyError("");
-    clearReview();
     const result = await createPrivateSession(state.playerId, state.settings.privateClock);
     openRemoteSession({ id: result.session.id, code: result.session.code, token: result.token }, result.session);
   };
 
   const createBotGameFlow = async (): Promise<void> => {
     setLobbyError("");
-    clearReview();
     const result = await createBotSession(state.playerId, state.settings.botName, state.settings.botClock);
     openRemoteSession({ id: result.session.id, code: result.session.code, token: result.token }, result.session);
   };
 
   const joinRoomFlow = async (code: string): Promise<void> => {
     setLobbyError("");
-    clearReview();
     const result = await joinPrivateSession(code, state.sessionRef?.token ?? null, state.playerId);
     openRemoteSession({ id: result.session.id, code: result.session.code, token: result.token }, result.session);
   };
@@ -294,18 +270,6 @@ export function createSessionController(options: {
     await cancelMatchmaking(state.playerId);
     stopMatchmakingPolling();
     setMatchmakingState(false, "");
-  };
-
-  const openImportedGame = async (file: File): Promise<void> => {
-    const review = parseFrontendGameFile(await file.text(), file.name);
-    validateReviewState(localBindings, review);
-    stopPolling();
-    stopMatchmakingPolling();
-    setMatchmakingState(false, "");
-    persistSession(null);
-    state.review = review;
-    setLobbyError("");
-    setReviewTurn(review.history.length - 1);
   };
 
   const runModeFlow = async (mode: SettingsMode): Promise<void> => {
@@ -323,8 +287,8 @@ export function createSessionController(options: {
       const nextSession = state.session.mode === "local"
         ? (() => {
             const now = Date.now();
-            const snapshot = callLocalPlay(localBindings, state.session!.gameJson, state.selected);
-            return buildLocalSession(snapshot, advanceLocalClock(state.session!.clock, snapshot.current_player, Boolean(snapshot.winner), now), now);
+            const snapshot = callLocalPlay(localBindings, state.session.gameJson, state.selected);
+            return buildLocalSession(snapshot, advanceLocalClock(state.session.clock, snapshot.current_player, Boolean(snapshot.winner), now), now);
           })()
         : await submitSessionTurn(state.sessionRef!, state.selected);
       state.selected = [];
@@ -343,9 +307,7 @@ export function createSessionController(options: {
     if (!session) return;
     const confirmed = window.confirm(session.mode === "local"
       ? "Leave this local game? It will stay saved on this device so you can resume later."
-      : session.mode === "review"
-        ? "Close this imported game review?"
-        : "Leave this session? You can reconnect later from this browser.");
+      : "Leave this session? You can reconnect later from this browser.");
     if (!confirmed) return;
     stopPolling();
     if (session.mode === "local") persistLocalSession();
@@ -398,16 +360,13 @@ export function createSessionController(options: {
     isPlayableCell,
     joinRoomFlow,
     leaveRoom,
-    openImportedGame,
     persistLocalSession,
     refreshControls,
     restoreSession,
     resumeNetworkFlows,
     runModeFlow,
     setLobbyError,
-    setReviewTurn,
     showLobby,
-    stepReview,
     submitTurnFlow,
     toggleSelected,
     updateHovered,

@@ -125,6 +125,7 @@ mod native {
 mod wasm {
     use super::{decode_move, encode_state};
     use hex_tic_tac_engine::Game;
+    use js_sys::{JSON, Reflect};
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen(module = "/src/seal_vendor_bridge.js")]
@@ -133,14 +134,34 @@ mod wasm {
         fn choose_sealbot_move(state_json: &str) -> Result<String, JsValue>;
     }
 
+    fn describe_js_error(error: JsValue) -> String {
+        if let Some(message) = error.as_string() {
+            return message;
+        }
+        if error.is_object() {
+            if let Ok(message) = Reflect::get(&error, &JsValue::from_str("message")) {
+                if let Some(message) = message.as_string() {
+                    if let Ok(stack) = Reflect::get(&error, &JsValue::from_str("stack")) {
+                        if let Some(stack) = stack.as_string() {
+                            return format!("{message}\n{stack}");
+                        }
+                    }
+                    return message;
+                }
+            }
+            if let Ok(serialized) = JSON::stringify(&error) {
+                if let Some(text) = serialized.as_string() {
+                    return text;
+                }
+            }
+        }
+        "SealBot wasm bridge failed".to_string()
+    }
+
     pub(super) fn choose_move(game: &Game) -> Result<[hex_tic_tac_engine::Cube; 2], String> {
         let state = encode_state(game)?;
         let state_json = serde_json::to_string(&state).map_err(|error| error.to_string())?;
-        let raw = choose_sealbot_move(&state_json).map_err(|error| {
-            error
-                .as_string()
-                .unwrap_or_else(|| "SealBot wasm bridge failed".to_string())
-        })?;
+        let raw = choose_sealbot_move(&state_json).map_err(describe_js_error)?;
         let move_data = serde_json::from_str::<Vec<i32>>(&raw).map_err(|error| error.to_string())?;
         decode_move(&move_data)
     }
