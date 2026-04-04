@@ -26,6 +26,7 @@ struct WorkerRequest<'a> {
     turns: Vec<[[i32; 2]; 2]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_key: Option<&'a str>,
+    base_turn_index: usize,
 }
 
 #[derive(Deserialize)]
@@ -47,6 +48,7 @@ struct KrakenWorker {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    sessions: HashMap<String, Vec<[[i32; 2]; 2]>>,
 }
 
 impl KrakenWorker {
@@ -103,6 +105,7 @@ impl KrakenWorker {
             child,
             stdin,
             stdout: BufReader::new(stdout),
+            sessions: HashMap::new(),
         };
 
         let ready = worker.read_line::<WorkerReady>()?;
@@ -127,17 +130,31 @@ impl KrakenWorker {
     }
 
     fn choose_move(&mut self, game: &Game, cache_key: Option<&str>) -> Result<[Cube; 2], String> {
-        let request = serde_json::to_string(&WorkerRequest {
-            turns: game
-                .turns()
-                .map(|turn| {
-                    turn.stones.map(|stone| {
-                        let (q, r) = stone.axial();
-                        [q, r]
-                    })
+        let current_turns = game
+            .turns()
+            .map(|turn| {
+                turn.stones.map(|stone| {
+                    let (q, r) = stone.axial();
+                    [q, r]
                 })
-                .collect(),
+            })
+            .collect::<Vec<_>>();
+
+        let (turns, base_turn_index) = match cache_key {
+            Some(key) => match self.sessions.get(key) {
+                Some(previous_turns) if current_turns.starts_with(previous_turns) => (
+                    current_turns[previous_turns.len()..].to_vec(),
+                    previous_turns.len(),
+                ),
+                _ => (current_turns.clone(), 0),
+            },
+            None => (current_turns.clone(), 0),
+        };
+
+        let request = serde_json::to_string(&WorkerRequest {
+            turns,
             cache_key,
+            base_turn_index,
         })
         .map_err(|error| error.to_string())?;
         self.stdin
@@ -148,6 +165,9 @@ impl KrakenWorker {
 
         let response = self.read_line::<WorkerResponse>()?;
         if let Some(error) = response.error {
+            if let Some(key) = cache_key {
+                self.sessions.remove(key);
+            }
             return Err(error);
         }
         let stones = response
@@ -155,10 +175,21 @@ impl KrakenWorker {
             .ok_or_else(|| "KrakenBot worker returned no stones".to_string())?
             .map(|[q, r]| Cube::from_axial(q, r));
         if !game.is_legal(stones) {
+            if let Some(key) = cache_key {
+                self.sessions.remove(key);
+            }
             return Err(format!(
                 "KrakenBot returned an illegal move: {:?}",
                 stones.map(|stone| stone.axial())
             ));
+        }
+        if let Some(key) = cache_key {
+            let mut next_turns = current_turns;
+            next_turns.push(stones.map(|stone| {
+                let (q, r) = stone.axial();
+                [q, r]
+            }));
+            self.sessions.insert(key.to_string(), next_turns);
         }
         Ok(stones)
     }

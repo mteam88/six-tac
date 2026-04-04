@@ -248,6 +248,18 @@ def _build_game(turns: list[Turn]) -> HexGame:
     return game
 
 
+def _clone_game(game: HexGame) -> HexGame:
+    clone = HexGame(win_length=game.win_length)
+    clone.board = dict(game.board)
+    clone.current_player = game.current_player
+    clone.moves_left_in_turn = game.moves_left_in_turn
+    clone.move_count = game.move_count
+    clone.winner = game.winner
+    clone.winning_cells = list(game.winning_cells)
+    clone.game_over = game.game_over
+    return clone
+
+
 def _sync_cached_game(session: CachedGame | None, turns: list[Turn]) -> CachedGame:
     if session is None or len(session.turns) > len(turns) or session.turns != turns[: len(session.turns)]:
         return CachedGame(game=_build_game(turns), turns=list(turns))
@@ -314,15 +326,29 @@ def main() -> int:
             request = json.loads(line)
             turns = _normalize_turns(request)
             cache_key = request.get("cache_key") or None
+            base_turn_index = int(request.get("base_turn_index", 0))
             session: CachedGame | None = None
             if cache_key is not None:
-                session = _sync_cached_game(sessions.get(cache_key), turns)
+                if base_turn_index > 0:
+                    session = sessions.get(cache_key)
+                    if session is None or len(session.turns) != base_turn_index:
+                        raise RuntimeError(
+                            f"cached Kraken session out of sync for {cache_key!r}: "
+                            f"expected {base_turn_index} turns"
+                        )
+                    for turn in turns:
+                        _apply_turn(session.game, turn)
+                        session.turns.append(turn)
+                else:
+                    session = _sync_cached_game(sessions.get(cache_key), turns)
                 sessions[cache_key] = session
                 sessions.move_to_end(cache_key)
                 while len(sessions) > max_cached_games:
                     sessions.popitem(last=False)
+            elif base_turn_index != 0:
+                raise RuntimeError("base_turn_index requires cache_key")
             with move_timeout(move_timeout_ms):
-                game = session.game if session is not None else _build_game(turns)
+                game = _clone_game(session.game) if session is not None else _build_game(turns)
                 stones = bot.get_move(game)
             if len(stones) != 2:
                 raise RuntimeError(f"expected two stones from KrakenBot, got: {stones!r}")
