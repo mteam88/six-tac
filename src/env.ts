@@ -13,4 +13,5 @@ export type Env = {
   KRAKEN_PYTHON_EXECUTABLE?: string;
   KRAKEN_TORCH_THREADS?: string;
   KRAKEN_BUILD_EXTENSIONS?: string;
+  KRAKEN_MOVE_TIMEOUT_MS?: string;
 };

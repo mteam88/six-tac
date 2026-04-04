@@ -75,6 +75,11 @@ mod native {
         Ok(())
     }
 
+    fn is_timeout_error(error: &str) -> bool {
+        let normalized = error.to_ascii_lowercase();
+        normalized.contains("timed out") || normalized.contains("timeout")
+    }
+
     fn handle_best_move(request: &mut tiny_http::Request) -> Response<std::io::Cursor<Vec<u8>>> {
         let result = (|| -> Result<MoveResponse, String> {
             let mut body = String::new();
@@ -96,7 +101,10 @@ mod native {
 
         match result {
             Ok(payload) => json_response(&payload),
-            Err(error) => json_error(StatusCode(400), &error),
+            Err(error) => json_error(
+                if is_timeout_error(&error) { StatusCode(504) } else { StatusCode(400) },
+                &error,
+            ),
         }
     }
 

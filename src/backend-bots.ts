@@ -5,6 +5,8 @@ import type { Env } from "./env";
 import { fetchKrakenContainer, hasKrakenContainer } from "./kraken-container";
 
 const REMOTE_BOT_LIST_TTL_MS = 60_000;
+const REMOTE_BOT_MOVE_TIMEOUT_MS = 30_000;
+const REMOTE_BOT_MOVE_MAX_ATTEMPTS = 2;
 
 type RemoteBotCache = {
   at: number;
@@ -147,6 +149,45 @@ export async function hasAvailableBot(env: Env, botName: BotName): Promise<boole
   return Boolean(await getAvailableBot(env, botName));
 }
 
+function isRetryableRemoteStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function fetchWithTimeout(resource: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(`Remote bot move timed out after ${timeoutMs}ms`), timeoutMs);
+  return fetch(resource, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+async function fetchRemoteBotServiceBestMove(baseUrl: string, body: string): Promise<Response> {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < REMOTE_BOT_MOVE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(`${baseUrl}/v1/best-move`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body,
+      }, REMOTE_BOT_MOVE_TIMEOUT_MS);
+      if (!isRetryableRemoteStatus(response.status) || attempt === REMOTE_BOT_MOVE_MAX_ATTEMPTS - 1) {
+        return response;
+      }
+      lastError = new Error(`Remote bot service returned ${response.status}`);
+      console.warn(`[bots] retrying remote move after ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === REMOTE_BOT_MOVE_MAX_ATTEMPTS - 1) {
+        break;
+      }
+      console.warn("[bots] retrying remote move after transport failure", error);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Remote bot service request failed");
+}
+
 async function chooseRemoteBotMove(
   env: Env,
   botName: BotName,
@@ -161,13 +202,7 @@ async function chooseRemoteBotMove(
 
   const baseUrl = remoteServiceBaseUrl(env);
   const response = baseUrl
-    ? await fetch(`${baseUrl}/v1/best-move`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body,
-      })
+    ? await fetchRemoteBotServiceBestMove(baseUrl, body)
     : botName === "kraken" && hasKrakenContainer(env)
       ? await fetchKrakenContainer(
           env,

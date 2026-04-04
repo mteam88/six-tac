@@ -4,8 +4,10 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import signal
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +18,25 @@ import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 
 DEFAULT_MODEL_PATH = "/Users/mte/Downloads/kraken_v1.pt"
+
+
+@contextmanager
+def move_timeout(timeout_ms: int):
+    if timeout_ms <= 0 or not hasattr(signal, "setitimer"):
+        yield
+        return
+
+    def handle_timeout(_signum, _frame):
+        raise TimeoutError(f"KrakenBot move timed out after {timeout_ms}ms")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, handle_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_ms / 1000)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def ensure_fast_extensions() -> None:
@@ -202,6 +223,7 @@ def main() -> int:
         device = requested_device
 
     thread_count = int(os.environ.get("KRAKEN_TORCH_THREADS", "1" if device == "mps" else "0"))
+    move_timeout_ms = int(os.environ.get("KRAKEN_MOVE_TIMEOUT_MS", "30000"))
     if thread_count > 0:
         torch.set_num_threads(thread_count)
         try:
@@ -234,8 +256,9 @@ def main() -> int:
             continue
         try:
             request = json.loads(line)
-            game = build_game(request["game_json"])
-            stones = bot.get_move(game)
+            with move_timeout(move_timeout_ms):
+                game = build_game(request["game_json"])
+                stones = bot.get_move(game)
             if len(stones) != 2:
                 raise RuntimeError(f"expected two stones from KrakenBot, got: {stones!r}")
             response = {"stones": [[int(q), int(r)] for q, r in stones]}

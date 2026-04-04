@@ -101,6 +101,7 @@ KRAKEN_MODEL_VERSION = "kraken_v1"
 KRAKEN_CONTAINER_POOL_SIZE = "2"
 KRAKEN_DEVICE = "cpu"
 KRAKEN_BUILD_EXTENSIONS = "0"
+KRAKEN_MOVE_TIMEOUT_MS = "30000"
 ```
 
 3. Deploy everything together:
@@ -114,6 +115,8 @@ Wrangler needs a working local Docker CLI/daemon to build and upload the Kraken 
 That deploys the Worker, assets, Durable Object migrations, and the Kraken container image defined in `bots/Dockerfile.kraken`.
 
 The Worker keeps the public API the same and forwards Kraken turns internally to the container runtime.
+
+Remote bot turns now run with a 30s timeout, automatically restart/retry once on transient container failures, and continue in the background so the player move request does not stay blocked waiting for Kraken.
 
 ## Deploy
 
