@@ -66,7 +66,7 @@ export class SettingsModal {
       settingsSaveButton.textContent = "Create";
     } else if (mode === "bot") {
       settingsTitle.textContent = "Play bot";
-      settingsHint.textContent = "Sprout makes random moves. Seal uses shallow minimax. Ambrosia scores weighted patterns. Hydra adds deeper tactical search, forced-block defense, and threat-fork planning. Orca plays a balanced generic minimax with threat-cover scoring.";
+      settingsHint.innerHTML = 'Sprout is random. <a href="https://github.com/Ramora0/SealBot" target="_blank" rel="noreferrer">Seal</a> is the best bot. <a href="https://github.com/hex-tic-tac-toe/ambrosia" target="_blank" rel="noreferrer">Ambrosia</a>, Hydra, and Orca are lighter in-house minimax bots.';
       settingsSaveButton.textContent = "Play";
       this.elements.settingsBotSelect.value = BOT_OPTIONS.some((option) => option.value === settings.botName) ? settings.botName : "sprout";
     } else {
