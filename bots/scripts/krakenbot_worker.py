@@ -79,6 +79,7 @@ class SearchCache:
     tree: object
     off_q: int
     off_r: int
+    proxy_game: HexGame
 
 
 @dataclass
@@ -200,7 +201,14 @@ def _advance_search_cache(search_cache: SearchCache | None, turn: Turn) -> Searc
         _root_occ_idx=occ_idx if occ_idx else None,
         _root_nearby=nearby if occ_idx else None,
     )
-    return SearchCache(tree=next_tree, off_q=search_cache.off_q, off_r=search_cache.off_r)
+    next_proxy_game = search_cache.proxy_game
+    _apply_turn(next_proxy_game, (grid_turn[0], grid_turn[1]))
+    return SearchCache(
+        tree=next_tree,
+        off_q=search_cache.off_q,
+        off_r=search_cache.off_r,
+        proxy_game=next_proxy_game,
+    )
 
 
 @torch.inference_mode()
@@ -248,6 +256,7 @@ def _choose_move_with_optional_cache(
             tree = search_cache.tree
             off_q = search_cache.off_q
             off_r = search_cache.off_r
+            proxy_game = search_cache.proxy_game
         else:
             tree, off_q, off_r = create_tree_dynamic(
                 game,
@@ -257,8 +266,13 @@ def _choose_move_with_optional_cache(
                 min_size=BOARD_SIZE,
                 margin=8,
             )
-        proxy_game = _build_proxy_game(game, off_q, off_r)
-        active_search_cache = SearchCache(tree=tree, off_q=off_q, off_r=off_r)
+            proxy_game = _build_proxy_game(game, off_q, off_r)
+        active_search_cache = SearchCache(
+            tree=tree,
+            off_q=off_q,
+            off_r=off_r,
+            proxy_game=proxy_game,
+        )
 
     cy_game = None
     if has_cy and isinstance(proxy_game, ToroidalHexGame):
