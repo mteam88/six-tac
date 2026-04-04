@@ -71,15 +71,150 @@ from mcts_bot import MCTSBot  # noqa: E402
 from model.resnet import BOARD_SIZE  # noqa: E402
 
 
+Turn = tuple[tuple[int, int], tuple[int, int]]
+
+
+@dataclass
+class SearchCache:
+    tree: object
+    off_q: int
+    off_r: int
+
+
+@dataclass
+class CachedGame:
+    game: HexGame
+    turns: list[Turn]
+    search_cache: SearchCache | None = None
+
+
+def _build_proxy_game(game: HexGame, off_q: int, off_r: int) -> HexGame:
+    proxy_game = HexGame(win_length=game.win_length)
+    proxy_game.board = {}
+    for (rq, rr), player in game.board.items():
+        proxy_game.board[(rq + off_q, rr + off_r)] = player
+    proxy_game.current_player = game.current_player
+    proxy_game.moves_left_in_turn = game.moves_left_in_turn
+    proxy_game.move_count = game.move_count
+    proxy_game.winner = game.winner
+    proxy_game.winning_cells = list(getattr(game, "winning_cells", []))
+    proxy_game.game_over = game.game_over
+    return proxy_game
+
+
+def _can_reuse_search_cache(game: HexGame, search_cache: SearchCache | None) -> bool:
+    if search_cache is None:
+        return False
+    tree = search_cache.tree
+    if tree.root_planes is None or tree.root_player != game.current_player:
+        return False
+    bw = tree.board_width
+    bh = tree.n_cells // bw
+    for rq, rr in game.board.keys():
+        gq = rq + search_cache.off_q
+        gr = rr + search_cache.off_r
+        if not (0 <= gq < bh and 0 <= gr < bw):
+            return False
+    return True
+
+
+def _select_pair_from_root(tree, temperature: float) -> tuple[tuple[int, int], tuple[int, int]]:
+    from mcts.tree import select_move_pair
+
+    if tree.root_pos.is_root:
+        return select_move_pair(tree, temperature=temperature)
+
+    root = tree.root_pos.move_node
+    if root.actions is None or root.n == 0:
+        raise RuntimeError("reused Kraken root has no legal actions")
+
+    weights = torch.tensor(root.visits, dtype=torch.float32)
+    if torch.count_nonzero(weights).item() == 0:
+        weights = torch.tensor(root.priors, dtype=torch.float32)
+
+    if temperature < 0.05:
+        best_local = weights.argmax().item()
+    else:
+        logits = weights.clamp_min(1e-9).log() / temperature
+        probs = F.softmax(logits, dim=0)
+        best_local = torch.multinomial(probs, 1).item()
+
+    pair_action = root.actions[best_local]
+    s1_idx = pair_action // tree.n_cells
+    s2_idx = pair_action % tree.n_cells
+    bw = tree.board_width
+    return ((s1_idx // bw, s1_idx % bw), (s2_idx // bw, s2_idx % bw))
+
+
+def _advance_search_cache(search_cache: SearchCache | None, turn: Turn) -> SearchCache | None:
+    if search_cache is None:
+        return None
+
+    from mcts.tree import MCTSTree, _nearby_candidates_dynamic
+
+    tree = search_cache.tree
+    if tree.root_planes is None or tree.root_pos is None or tree.root_player is None:
+        return None
+
+    bw = tree.board_width
+    bh = tree.n_cells // bw
+    grid_turn = []
+    for rq, rr in turn:
+        gq = rq + search_cache.off_q
+        gr = rr + search_cache.off_r
+        if not (0 <= gq < bh and 0 <= gr < bw):
+            return None
+        grid_turn.append((gq, gr))
+
+    (g1q, g1r), (g2q, g2r) = grid_turn
+    s1_idx = g1q * bw + g1r
+    s2_idx = g2q * bw + g2r
+
+    if tree.root_pos.is_root:
+        child = (tree.root_pos.children or {}).get((s1_idx, s2_idx))
+    else:
+        child = (tree.root_pos.children or {}).get(s1_idx * tree.n_cells + s2_idx)
+    if child is None or child.player is None:
+        return None
+
+    next_planes = tree.root_planes.flip(0).clone()
+    next_planes[1, g1q, g1r] = 1.0
+    next_planes[1, g2q, g2r] = 1.0
+
+    occupied = set(tree.root_occupied or ())
+    occupied.add((g1q, g1r))
+    occupied.add((g2q, g2r))
+    occupied_frozen = frozenset(occupied)
+    occ_idx = frozenset(gq * bw + gr for gq, gr in occupied)
+    nearby = _nearby_candidates_dynamic(occ_idx, bw, bh) if occ_idx else set()
+
+    next_tree = MCTSTree(
+        root_pos=child,
+        pair_probs=None,
+        root_planes=next_planes,
+        root_player=child.player,
+        root_value=child.value,
+        root_occupied=occupied_frozen,
+        board_width=bw,
+        n_cells=tree.n_cells,
+        _root_occ_idx=occ_idx if occ_idx else None,
+        _root_nearby=nearby if occ_idx else None,
+    )
+    return SearchCache(tree=next_tree, off_q=search_cache.off_q, off_r=search_cache.off_r)
+
+
 @torch.inference_mode()
-def _patched_get_move(self, game) -> list[tuple[int, int]]:
+def _choose_move_with_optional_cache(
+    bot: MCTSBot,
+    game,
+    search_cache: SearchCache | None,
+) -> tuple[list[tuple[int, int]], SearchCache | None]:
     from mcts.tree import (
         create_tree,
         create_tree_dynamic,
         expand_and_backprop,
         maybe_expand_leaf,
         select_leaf,
-        select_move_pair,
         select_single_move,
     )
 
@@ -92,48 +227,46 @@ def _patched_get_move(self, game) -> list[tuple[int, int]]:
         select_leaf_cy = None
         has_cy = False
 
-    self.last_depth = self.n_sims
-    self._nodes = 0
+    bot.last_depth = bot.n_sims
+    bot._nodes = 0
     is_torus = isinstance(game, ToroidalHexGame)
 
     if not game.board:
         if is_torus:
             center = BOARD_SIZE // 2
-            return [(center, center)]
-        return [(0, 0)]
+            return [(center, center)], None
+        return [(0, 0)], None
 
     if is_torus:
-        tree = create_tree(game, self.model, self.device, add_noise=False)
+        tree = create_tree(game, bot.model, bot.device, add_noise=False)
         proxy_game = game
         off_q = off_r = 0
+        active_search_cache = None
     else:
-        self.model.set_padding_mode("zeros")
-        tree, off_q, off_r = create_tree_dynamic(
-            game,
-            self.model,
-            self.device,
-            add_noise=False,
-            min_size=BOARD_SIZE,
-            margin=8,
-        )
-        proxy_game = HexGame(win_length=game.win_length)
-        proxy_game.board = {}
-        for (rq, rr), player in game.board.items():
-            proxy_game.board[(rq + off_q, rr + off_r)] = player
-        proxy_game.current_player = game.current_player
-        proxy_game.moves_left_in_turn = game.moves_left_in_turn
-        proxy_game.move_count = game.move_count
-        proxy_game.winner = game.winner
-        proxy_game.winning_cells = list(getattr(game, "winning_cells", []))
-        proxy_game.game_over = game.game_over
+        bot.model.set_padding_mode("zeros")
+        if _can_reuse_search_cache(game, search_cache):
+            tree = search_cache.tree
+            off_q = search_cache.off_q
+            off_r = search_cache.off_r
+        else:
+            tree, off_q, off_r = create_tree_dynamic(
+                game,
+                bot.model,
+                bot.device,
+                add_noise=False,
+                min_size=BOARD_SIZE,
+                margin=8,
+            )
+        proxy_game = _build_proxy_game(game, off_q, off_r)
+        active_search_cache = SearchCache(tree=tree, off_q=off_q, off_r=off_r)
 
     cy_game = None
     if has_cy and isinstance(proxy_game, ToroidalHexGame):
         cy_game = CyGameState.from_toroidal_game(proxy_game)
 
-    self._nodes = 1
+    bot._nodes = 1
 
-    for _ in range(self.n_sims):
+    for _ in range(bot.n_sims):
         if cy_game is not None:
             leaf = select_leaf_cy(tree, cy_game)
         else:
@@ -152,8 +285,8 @@ def _patched_get_move(self, game) -> list[tuple[int, int]]:
         for gq, gr, ch in leaf.deltas:
             actual_ch = (1 - ch) if leaf.player_flipped else ch
             planes[actual_ch, gq, gr] = 1.0
-        x = planes.unsqueeze(0).to(self.device)
-        value, pair_logits, _, _ = self.model(x)
+        x = planes.unsqueeze(0).to(bot.device)
+        value, pair_logits, _, _ = bot.model(x)
         nn_val = value[0].item()
         if cy_game is not None:
             backprop_cy(tree, leaf, nn_val)
@@ -167,37 +300,41 @@ def _patched_get_move(self, game) -> list[tuple[int, int]]:
             top_vals = F.softmax(top_raw, dim=0)
             marginal_logits = logits.logsumexp(dim=-1)
             marginal = F.softmax(marginal_logits, dim=0).cpu()
-            maybe_expand_leaf(tree, leaf, marginal, top_idxs.cpu(), top_vals.cpu(), nn_value=nn_val)
+            maybe_expand_leaf(
+                tree,
+                leaf,
+                marginal,
+                top_idxs.cpu(),
+                top_vals.cpu(),
+                nn_value=nn_val,
+            )
 
-        self._nodes += 1
+        bot._nodes += 1
 
-    self.last_root_value = tree.root_value
+    bot.last_root_value = tree.root_value
 
     if not is_torus:
-        self.model.set_padding_mode("circular")
+        bot.model.set_padding_mode("circular")
 
     if game.moves_left_in_turn == 1:
         gq, gr = select_single_move(tree)
         if is_torus:
-            return [(gq, gr)]
-        return [(gq - off_q, gr - off_r)]
+            return [(gq, gr)], active_search_cache
+        return [(gq - off_q, gr - off_r)], active_search_cache
 
-    (g1q, g1r), (g2q, g2r) = select_move_pair(tree, temperature=0.1)
+    (g1q, g1r), (g2q, g2r) = _select_pair_from_root(tree, temperature=0.1)
     if is_torus:
-        return [(g1q, g1r), (g2q, g2r)]
-    return [(g1q - off_q, g1r - off_r), (g2q - off_q, g2r - off_r)]
+        return [(g1q, g1r), (g2q, g2r)], active_search_cache
+    return [(g1q - off_q, g1r - off_r), (g2q - off_q, g2r - off_r)], active_search_cache
+
+
+@torch.inference_mode()
+def _patched_get_move(self, game) -> list[tuple[int, int]]:
+    stones, _search_cache = _choose_move_with_optional_cache(self, game, None)
+    return stones
 
 
 MCTSBot.get_move = _patched_get_move
-
-
-Turn = tuple[tuple[int, int], tuple[int, int]]
-
-
-@dataclass
-class CachedGame:
-    game: HexGame
-    turns: list[Turn]
 
 
 def _new_game() -> HexGame:
@@ -241,6 +378,12 @@ def _apply_turn(game: HexGame, turn: Turn) -> None:
             raise RuntimeError(f"illegal translated move in KrakenBot bridge: {(q, r)}")
 
 
+def _apply_turn_to_session(session: CachedGame, turn: Turn) -> None:
+    _apply_turn(session.game, turn)
+    session.turns.append(turn)
+    session.search_cache = _advance_search_cache(session.search_cache, turn)
+
+
 def _build_game(turns: list[Turn]) -> HexGame:
     game = _new_game()
     for turn in turns:
@@ -262,11 +405,10 @@ def _clone_game(game: HexGame) -> HexGame:
 
 def _sync_cached_game(session: CachedGame | None, turns: list[Turn]) -> CachedGame:
     if session is None or len(session.turns) > len(turns) or session.turns != turns[: len(session.turns)]:
-        return CachedGame(game=_build_game(turns), turns=list(turns))
+        return CachedGame(game=_build_game(turns), turns=list(turns), search_cache=None)
 
-    for turn in turns[len(session.turns) :]:
-        _apply_turn(session.game, turn)
-        session.turns.append(turn)
+    for turn in turns[len(session.turns):]:
+        _apply_turn_to_session(session, turn)
     return session
 
 
@@ -338,8 +480,7 @@ def main() -> int:
                             f"expected {base_turn_index} turns"
                         )
                     for turn in turns:
-                        _apply_turn(session.game, turn)
-                        session.turns.append(turn)
+                        _apply_turn_to_session(session, turn)
                 else:
                     session = _sync_cached_game(sessions.get(cache_key), turns)
                 sessions[cache_key] = session
@@ -348,15 +489,24 @@ def main() -> int:
                     sessions.popitem(last=False)
             elif base_turn_index != 0:
                 raise RuntimeError("base_turn_index requires cache_key")
+
             with move_timeout(move_timeout_ms):
                 game = _clone_game(session.game) if session is not None else _build_game(turns)
-                stones = bot.get_move(game)
+                stones, active_search_cache = _choose_move_with_optional_cache(
+                    bot,
+                    game,
+                    session.search_cache if session is not None else None,
+                )
             if len(stones) != 2:
                 raise RuntimeError(f"expected two stones from KrakenBot, got: {stones!r}")
             move = ((int(stones[0][0]), int(stones[0][1])), (int(stones[1][0]), int(stones[1][1])))
-            if session is not None and advance_session:
-                _apply_turn(session.game, move)
-                session.turns.append(move)
+            if session is not None:
+                if advance_session:
+                    _apply_turn(session.game, move)
+                    session.turns.append(move)
+                    session.search_cache = _advance_search_cache(active_search_cache, move)
+                else:
+                    session.search_cache = active_search_cache
             response = {"stones": [[q, r] for q, r in move]}
         except Exception as exc:
             if cache_key is not None:
