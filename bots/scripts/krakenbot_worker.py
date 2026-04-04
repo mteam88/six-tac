@@ -76,9 +76,11 @@ Turn = tuple[tuple[int, int], tuple[int, int]]
 
 @dataclass
 class SearchCache:
-    tree: object
+    tree: object | None
     off_q: int
     off_r: int
+    board_height: int
+    board_width: int
     proxy_game: HexGame
 
 
@@ -103,20 +105,84 @@ def _build_proxy_game(game: HexGame, off_q: int, off_r: int) -> HexGame:
     return proxy_game
 
 
-def _can_reuse_search_cache(game: HexGame, search_cache: SearchCache | None) -> bool:
+def _can_reuse_grid_cache(game: HexGame, search_cache: SearchCache | None) -> bool:
     if search_cache is None:
         return False
-    tree = search_cache.tree
-    if tree.root_planes is None or tree.root_player != game.current_player:
+    if search_cache.proxy_game.current_player != game.current_player:
         return False
-    bw = tree.board_width
-    bh = tree.n_cells // bw
+    bh = search_cache.board_height
+    bw = search_cache.board_width
     for rq, rr in game.board.keys():
         gq = rq + search_cache.off_q
         gr = rr + search_cache.off_r
         if not (0 <= gq < bh and 0 <= gr < bw):
             return False
     return True
+
+
+def _can_reuse_search_cache(game: HexGame, search_cache: SearchCache | None) -> bool:
+    return (
+        _can_reuse_grid_cache(game, search_cache)
+        and search_cache is not None
+        and search_cache.tree is not None
+        and search_cache.tree.root_planes is not None
+        and search_cache.tree.root_player == game.current_player
+    )
+
+
+def _create_tree_from_proxy_game(bot: MCTSBot, proxy_game: HexGame, board_height: int, board_width: int):
+    from mcts.tree import MCTSTree, PosNode, _init_node_children, _nearby_candidates_dynamic
+
+    planes = torch.zeros(2, board_height, board_width)
+    cp = proxy_game.current_player.value if hasattr(proxy_game.current_player, "value") else proxy_game.current_player
+    for (q, r), player in proxy_game.board.items():
+        pv = player.value if hasattr(player, "value") else player
+        if pv == cp:
+            planes[0, q, r] = 1.0
+        else:
+            planes[1, q, r] = 1.0
+
+    x = planes.unsqueeze(0).to(bot.device)
+    value, pair_logits, _, _ = bot.model(x)
+
+    nc = board_height * board_width
+    root_value = value[0].item()
+    pair_probs = F.softmax(pair_logits[0].reshape(-1), dim=0).reshape(nc, nc).cpu()
+    marginal = pair_probs.sum(dim=-1)
+
+    occupied_grid = set(proxy_game.board.keys())
+    cand_indices = [
+        gq * board_width + gr
+        for gq in range(board_height)
+        for gr in range(board_width)
+        if (gq, gr) not in occupied_grid
+    ]
+    cand_priors = [(idx, marginal[idx].item()) for idx in cand_indices]
+    cand_priors.sort(key=lambda item: item[1], reverse=True)
+
+    pos = PosNode()
+    pos.value = root_value
+    pos.player = proxy_game.current_player
+    pos.is_root = True
+    pos._marginal = marginal
+    _init_node_children(pos.move_node, cand_priors)
+
+    occupied_frozen = frozenset(occupied_grid)
+    occ_idx = frozenset(gq * board_width + gr for gq, gr in occupied_grid)
+    nearby = _nearby_candidates_dynamic(occ_idx, board_width, board_height) if occ_idx else set()
+
+    return MCTSTree(
+        root_pos=pos,
+        pair_probs=pair_probs,
+        root_planes=planes,
+        root_player=proxy_game.current_player,
+        root_value=root_value,
+        root_occupied=occupied_frozen,
+        board_width=board_width,
+        n_cells=nc,
+        _root_occ_idx=occ_idx if occ_idx else None,
+        _root_nearby=nearby if occ_idx else None,
+    )
 
 
 def _select_pair_from_root(tree, temperature: float) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -151,22 +217,31 @@ def _advance_search_cache(search_cache: SearchCache | None, turn: Turn) -> Searc
     if search_cache is None:
         return None
 
-    from mcts.tree import MCTSTree, _nearby_candidates_dynamic
-
-    tree = search_cache.tree
-    if tree.root_planes is None or tree.root_pos is None or tree.root_player is None:
-        return None
-
-    bw = tree.board_width
-    bh = tree.n_cells // bw
+    next_proxy_game = search_cache.proxy_game
     grid_turn = []
     for rq, rr in turn:
         gq = rq + search_cache.off_q
         gr = rr + search_cache.off_r
-        if not (0 <= gq < bh and 0 <= gr < bw):
+        if not (0 <= gq < search_cache.board_height and 0 <= gr < search_cache.board_width):
             return None
         grid_turn.append((gq, gr))
+    _apply_turn(next_proxy_game, (grid_turn[0], grid_turn[1]))
 
+    tree = search_cache.tree
+    if tree is None or tree.root_planes is None or tree.root_pos is None or tree.root_player is None:
+        return SearchCache(
+            tree=None,
+            off_q=search_cache.off_q,
+            off_r=search_cache.off_r,
+            board_height=search_cache.board_height,
+            board_width=search_cache.board_width,
+            proxy_game=next_proxy_game,
+        )
+
+    from mcts.tree import MCTSTree, _nearby_candidates_dynamic
+
+    bw = tree.board_width
+    bh = tree.n_cells // bw
     (g1q, g1r), (g2q, g2r) = grid_turn
     s1_idx = g1q * bw + g1r
     s2_idx = g2q * bw + g2r
@@ -176,7 +251,14 @@ def _advance_search_cache(search_cache: SearchCache | None, turn: Turn) -> Searc
     else:
         child = (tree.root_pos.children or {}).get(s1_idx * tree.n_cells + s2_idx)
     if child is None or child.player is None:
-        return None
+        return SearchCache(
+            tree=None,
+            off_q=search_cache.off_q,
+            off_r=search_cache.off_r,
+            board_height=search_cache.board_height,
+            board_width=search_cache.board_width,
+            proxy_game=next_proxy_game,
+        )
 
     next_planes = tree.root_planes.flip(0).clone()
     next_planes[1, g1q, g1r] = 1.0
@@ -201,12 +283,12 @@ def _advance_search_cache(search_cache: SearchCache | None, turn: Turn) -> Searc
         _root_occ_idx=occ_idx if occ_idx else None,
         _root_nearby=nearby if occ_idx else None,
     )
-    next_proxy_game = search_cache.proxy_game
-    _apply_turn(next_proxy_game, (grid_turn[0], grid_turn[1]))
     return SearchCache(
         tree=next_tree,
         off_q=search_cache.off_q,
         off_r=search_cache.off_r,
+        board_height=search_cache.board_height,
+        board_width=search_cache.board_width,
         proxy_game=next_proxy_game,
     )
 
@@ -256,7 +338,16 @@ def _choose_move_with_optional_cache(
             tree = search_cache.tree
             off_q = search_cache.off_q
             off_r = search_cache.off_r
+            board_height = search_cache.board_height
+            board_width = search_cache.board_width
             proxy_game = search_cache.proxy_game
+        elif _can_reuse_grid_cache(game, search_cache):
+            off_q = search_cache.off_q
+            off_r = search_cache.off_r
+            board_height = search_cache.board_height
+            board_width = search_cache.board_width
+            proxy_game = search_cache.proxy_game
+            tree = _create_tree_from_proxy_game(bot, proxy_game, board_height, board_width)
         else:
             tree, off_q, off_r = create_tree_dynamic(
                 game,
@@ -267,10 +358,14 @@ def _choose_move_with_optional_cache(
                 margin=8,
             )
             proxy_game = _build_proxy_game(game, off_q, off_r)
+            board_width = tree.board_width
+            board_height = tree.n_cells // board_width
         active_search_cache = SearchCache(
             tree=tree,
             off_q=off_q,
             off_r=off_r,
+            board_height=board_height,
+            board_width=board_width,
             proxy_game=proxy_game,
         )
 
