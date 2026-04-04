@@ -1,7 +1,9 @@
 import type {
+  BotCatalogEntry,
   BotName,
   ClockSettings,
   Cube,
+  HumanSeat,
   JoinSessionResponse,
   MatchmakingStatus,
   SessionRef,
@@ -25,6 +27,10 @@ async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
+export function loadAvailableBots(): Promise<{ bots: BotCatalogEntry[] }> {
+  return requestJson<{ bots: BotCatalogEntry[] }>("/api/v1/bots");
+}
+
 export function createPrivateSession(playerId: string, clock: ClockSettings | null): Promise<JoinSessionResponse> {
   return requestJson<JoinSessionResponse>("/api/v1/sessions/private", {
     method: "POST",
@@ -35,11 +41,12 @@ export function createPrivateSession(playerId: string, clock: ClockSettings | nu
 export function createBotSession(
   playerId: string,
   botName: BotName,
+  humanSeat: HumanSeat,
   clock: ClockSettings | null,
 ): Promise<JoinSessionResponse> {
   return requestJson<JoinSessionResponse>("/api/v1/sessions/bot", {
     method: "POST",
-    body: JSON.stringify({ playerId, botName, clock }),
+    body: JSON.stringify({ playerId, botName, humanSeat, clock }),
   });
 }
 

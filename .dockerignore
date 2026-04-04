@@ -1,0 +1,13 @@
+.git
+.gitignore
+.wrangler
+node_modules
+public
+local-engine
+src/engine-wasm
+src/bot-wasm
+engine/target
+bots/target
+autoresearch.jsonl
+autoresearch.md
+autoresearch.ideas.md

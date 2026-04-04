@@ -2,6 +2,8 @@ mod ambrosia;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod arena;
 mod hydra;
+#[cfg(not(target_arch = "wasm32"))]
+mod kraken;
 mod orca;
 mod seal_vendor;
 mod shared;
@@ -31,15 +33,27 @@ pub enum BotName {
     Ambrosia,
     Hydra,
     Orca,
+    Kraken,
 }
 
 impl BotName {
+    #[cfg(target_arch = "wasm32")]
     pub const ALL: [Self; 5] = [
         Self::Sprout,
         Self::Seal,
         Self::Ambrosia,
         Self::Hydra,
         Self::Orca,
+    ];
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const ALL: [Self; 6] = [
+        Self::Sprout,
+        Self::Seal,
+        Self::Ambrosia,
+        Self::Hydra,
+        Self::Orca,
+        Self::Kraken,
     ];
 
     #[must_use]
@@ -50,6 +64,7 @@ impl BotName {
             Self::Ambrosia => "ambrosia",
             Self::Hydra => "hydra",
             Self::Orca => "orca",
+            Self::Kraken => "kraken",
         }
     }
 }
@@ -64,6 +79,7 @@ impl FromStr for BotName {
             "ambrosia" => Ok(Self::Ambrosia),
             "hydra" => Ok(Self::Hydra),
             "orca" => Ok(Self::Orca),
+            "kraken" => Ok(Self::Kraken),
             _ => Err(format!("unknown bot: {value}")),
         }
     }
@@ -80,6 +96,34 @@ pub fn choose_move(bot_name: BotName, game: &Game) -> Result<[Cube; 2], String> 
     choose_move_with_rng(bot_name, game, &mut rng)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn choose_move_cached(
+    bot_name: BotName,
+    game: &Game,
+    cache_key: Option<&str>,
+) -> Result<[Cube; 2], String> {
+    match bot_name {
+        BotName::Kraken => kraken::choose_kraken_move_cached(game, cache_key),
+        _ => choose_move(bot_name, game),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn choose_move_uncached(bot_name: BotName, game: &Game) -> Result<[Cube; 2], String> {
+    match bot_name {
+        BotName::Kraken => kraken::choose_kraken_move_uncached(game),
+        _ => choose_move(bot_name, game),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_bot_available(bot_name: BotName) -> bool {
+    match bot_name {
+        BotName::Kraken => kraken::is_kraken_available(),
+        _ => true,
+    }
+}
+
 pub(crate) fn choose_move_with_rng<R: shared::IndexRng>(
     bot_name: BotName,
     game: &Game,
@@ -91,6 +135,10 @@ pub(crate) fn choose_move_with_rng<R: shared::IndexRng>(
         BotName::Ambrosia => ambrosia::choose_ambrosia_move(game),
         BotName::Hydra => hydra::choose_hydra_move(game),
         BotName::Orca => orca::choose_orca_move(game),
+        #[cfg(not(target_arch = "wasm32"))]
+        BotName::Kraken => kraken::choose_kraken_move(game),
+        #[cfg(target_arch = "wasm32")]
+        BotName::Kraken => Err("kraken is only available through the native bot service".to_string()),
     }
 }
 
@@ -101,7 +149,7 @@ struct BotMoveView {
 
 #[derive(Serialize)]
 struct BotListView {
-    bots: [BotName; 5],
+    bots: Vec<BotName>,
 }
 
 #[derive(Deserialize)]
@@ -112,7 +160,9 @@ struct BotRequest {
 
 #[wasm_bindgen]
 pub fn list_bots_json() -> Result<String, JsValue> {
-    serde_json::to_string(&BotListView { bots: BotName::ALL })
+    serde_json::to_string(&BotListView {
+        bots: BotName::ALL.to_vec(),
+    })
         .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
@@ -147,6 +197,7 @@ mod tests {
         assert_eq!(BotName::from_str("ambrosia").unwrap(), BotName::Ambrosia);
         assert_eq!(BotName::from_str("hydra").unwrap(), BotName::Hydra);
         assert_eq!(BotName::from_str("orca").unwrap(), BotName::Orca);
+        assert_eq!(BotName::from_str("kraken").unwrap(), BotName::Kraken);
         assert!(BotName::from_str("abrosia").is_err());
     }
 
@@ -154,6 +205,11 @@ mod tests {
     fn all_named_bots_produce_legal_opening_moves() {
         let game = Game::new();
         for bot in BotName::ALL {
+            #[cfg(not(target_arch = "wasm32"))]
+            if bot == BotName::Kraken && !crate::kraken::is_kraken_available() {
+                continue;
+            }
+
             let stones = choose_move(bot, &game).unwrap();
             assert!(
                 game.is_legal(stones),

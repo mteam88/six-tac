@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { json, readJson, clientAddress } from "../api/utils";
-import { chooseBotMove } from "../bots";
+import { chooseBackendBotMove } from "../backend-bots";
 import { completeMove, expireSessionOnClock, getDeadlineAt, startClock } from "../domain/clock";
 import {
   applySnapshotResult,
@@ -184,7 +184,12 @@ export class SessionObject extends DurableObject<Env> {
       }
 
       this.ensureActiveClock(session, snapshot, now);
-      const stones = chooseBotMove(participant.botConfig.name, session.turnsJson);
+      const stones = await chooseBackendBotMove(
+        this.env,
+        participant.botConfig.name,
+        session.turnsJson,
+        session.id,
+      );
       const nextSnapshot = callPlay(session.turnsJson, stones);
       session.turnsJson = nextSnapshot.turns_json;
       session.snapshot = nextSnapshot;

@@ -1,11 +1,16 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
 name = "six-tac"
 main = "src/worker.ts"
 compatibility_date = "2026-04-02"
 workers_dev = true
 
-[observability.logs]
+[observability]
 enabled = true
-invocation_logs = true
+
+  [observability.logs]
+  enabled = true
+  invocation_logs = true
+  head_sampling_rate = 1
 
 [[routes]]
 pattern = "6-tac.com"
@@ -24,6 +29,10 @@ class_name = "SessionObject"
 name = "MATCHMAKER"
 class_name = "MatchmakerObject"
 
+[[durable_objects.bindings]]
+name = "KRAKEN_CONTAINER"
+class_name = "KrakenContainer"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomObject"]
@@ -31,3 +40,24 @@ new_sqlite_classes = ["RoomObject"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["SessionObject", "MatchmakerObject"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["KrakenContainer"]
+
+[[containers]]
+class_name = "KrakenContainer"
+image = "./bots/Dockerfile.kraken"
+image_build_context = "."
+max_instances = 4
+
+  [containers.instance_type]
+  vcpu = 1
+  memory_mib = 3072
+  disk_mb = 4000
+
+[vars]
+KRAKEN_MODEL_VERSION = "kraken_v1"
+KRAKEN_CONTAINER_POOL_SIZE = "2"
+KRAKEN_DEVICE = "cpu"
+KRAKEN_BUILD_EXTENSIONS = "0"

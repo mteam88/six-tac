@@ -18,8 +18,17 @@ bots/generated/
 npm-debug.log*
 .DS_Store
 .env
+.dev.vars
+.venv-kraken-export/
 
 # Local bot training artifacts
 bots/data/
 bots/models/
 bots/python/__pycache__/
+
+# local kraken/autoresearch artifacts
+.kraken-coreml-cache/
+autoresearch.md
+autoresearch.sh
+autoresearch.ideas.md
+autoresearch.jsonl

@@ -1,4 +1,5 @@
 import { handleLocalMove, handleLocalStart } from "./api/local";
+import { handleBotList } from "./api/bots";
 import {
   handleCreateBotSession,
   handleCreatePrivateSession,
@@ -15,9 +16,10 @@ import { json } from "./api/utils";
 import { MatchmakerObject } from "./durable/matchmaker-object";
 import { SessionObject } from "./durable/session-object";
 import type { Env } from "./env";
+import { KrakenContainer } from "./kraken-container";
 
 export class RoomObject extends SessionObject {}
-export { SessionObject, MatchmakerObject };
+export { SessionObject, MatchmakerObject, KrakenContainer };
 
 function sessionRoute(pathname: string): { sessionId: string; action: string } | null {
   const parts = pathname.split("/").filter(Boolean);
@@ -41,6 +43,10 @@ export default {
 
       if (request.method === "POST" && pathname === "/api/v1/local/move") {
         return handleLocalMove(request);
+      }
+
+      if (request.method === "GET" && pathname === "/api/v1/bots") {
+        return handleBotList(env);
       }
 
       if (request.method === "POST" && pathname === "/api/v1/sessions/private") {

@@ -256,7 +256,12 @@ export function createSessionController(options: {
 
   const createBotGameFlow = async (): Promise<void> => {
     setLobbyError("");
-    const result = await createBotSession(state.playerId, state.settings.botName, state.settings.botClock);
+    const result = await createBotSession(
+      state.playerId,
+      state.settings.botName,
+      state.settings.botHumanSeat,
+      state.settings.botClock,
+    );
     openRemoteSession({ id: result.session.id, code: result.session.code, token: result.token }, result.session);
   };
 

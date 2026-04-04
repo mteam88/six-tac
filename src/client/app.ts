@@ -1,4 +1,5 @@
 import type { BotName } from "../domain/types.js";
+import { loadAvailableBots } from "./api.js";
 import type { AppState } from "./app-types.js";
 import type { CameraState } from "./render.js";
 import { ROOM_QUERY_PARAM } from "../domain/types.js";
@@ -47,6 +48,7 @@ function saveModeSettings(state: AppState, mode: SettingsMode, result: SettingsR
   else if (mode === "bot") {
     state.settings.botClock = result.clock ?? null;
     state.settings.botName = result.botName as BotName;
+    state.settings.botHumanSeat = result.botHumanSeat ?? state.settings.botHumanSeat;
   } else state.settings.matchmakingClock = result.clock ?? null;
   saveSettings(state.settings);
 }
@@ -163,6 +165,19 @@ export function initApp(localBindings: LocalBindings): void {
     session.persistLocalSession();
   });
   window.addEventListener("pagehide", () => session.persistLocalSession());
+
+  void loadAvailableBots()
+    .then(({ bots }) => {
+      settingsModal.setAvailableBots(bots);
+      const botNames = bots.map((bot) => bot.name);
+      if (!botNames.includes(state.settings.botName)) {
+        state.settings.botName = botNames[0] ?? "sprout";
+        saveSettings(state.settings);
+      }
+    })
+    .catch(() => {
+      // keep embedded defaults if the catalog request fails
+    });
 
   registerServiceWorker();
   renderer.resizeCanvas();

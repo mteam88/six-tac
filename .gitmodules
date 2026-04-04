@@ -1,3 +1,6 @@
 [submodule "bots/vendor/SealBot"]
 	path = bots/vendor/SealBot
-	url = https://github.com/mteam88/SealBot.git
+	url = https://github.com/Ramora0/SealBot
+[submodule "bots/vendor/KrakenBot"]
+	path = bots/vendor/KrakenBot
+	url = https://github.com/Ramora0/KrakenBot

@@ -1,4 +1,4 @@
-import type { BotName, ClockSettings, ClockState, SessionRef } from "../domain/types.js";
+import type { BotName, ClockSettings, ClockState, HumanSeat, SessionRef } from "../domain/types.js";
 
 export const SESSION_KEY = "six-tac-session";
 export const LOCAL_GAME_KEY = "six-tac-local-game";
@@ -11,6 +11,7 @@ export type LobbySettings = {
   privateClock: ClockSettings | null;
   botClock: ClockSettings | null;
   botName: BotName;
+  botHumanSeat: HumanSeat;
   matchmakingClock: ClockSettings | null;
 };
 
@@ -24,13 +25,23 @@ const DEFAULT_SETTINGS: LobbySettings = {
   privateClock: null,
   botClock: null,
   botName: "sprout",
+  botHumanSeat: "two",
   matchmakingClock: null,
 };
 
 function sanitizeBotName(botName: BotName | undefined): BotName {
-  return botName === "seal" || botName === "ambrosia" || botName === "hydra" || botName === "orca" || botName === "sprout"
+  return botName === "seal"
+    || botName === "ambrosia"
+    || botName === "hydra"
+    || botName === "orca"
+    || botName === "kraken"
+    || botName === "sprout"
     ? botName
     : "sprout";
+}
+
+function sanitizeHumanSeat(seat: HumanSeat | undefined): HumanSeat {
+  return seat === "one" || seat === "two" ? seat : "two";
 }
 
 export function loadSettings(): LobbySettings {
@@ -55,6 +66,7 @@ export function loadSettings(): LobbySettings {
       privateClock: parsed.privateClock ?? (parsed.privateClockTurnMs ? { initialMs: parsed.privateClockTurnMs, incrementMs: 0 } : null),
       botClock: parsed.botClock ?? (parsed.botClockTurnMs ? { initialMs: parsed.botClockTurnMs, incrementMs: 0 } : null),
       botName: sanitizeBotName(parsed.botName),
+      botHumanSeat: sanitizeHumanSeat(parsed.botHumanSeat),
       matchmakingClock: parsed.matchmakingClock ?? (parsed.matchmakingClockTurnMs ? { initialMs: parsed.matchmakingClockTurnMs, incrementMs: 0 } : null),
     };
   } catch {

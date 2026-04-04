@@ -4,7 +4,18 @@ export type Player = "One" | "Two";
 export type SessionMode = "local" | "private" | "bot" | "matchmade";
 export type SessionStatus = "waiting" | "active" | "finished" | "abandoned";
 export type FinishReason = "win" | "timeout" | "abandoned" | null;
-export type BotName = "sprout" | "seal" | "ambrosia" | "hydra" | "orca";
+export type BotName = "sprout" | "seal" | "ambrosia" | "hydra" | "orca" | "kraken";
+export type BotExecution = "browser" | "worker" | "remote";
+
+export type BotCatalogEntry = {
+  name: BotName;
+  label: string;
+  description: string;
+  execution: BotExecution;
+  version: string;
+  available: boolean;
+  offlineCapable: boolean;
+};
 
 export type Cube = {
   x: number;
@@ -52,6 +63,8 @@ export type Participant = {
   playerId?: string | null;
   botConfig?: {
     name: BotName;
+    version?: string;
+    execution?: BotExecution;
   };
 };
 

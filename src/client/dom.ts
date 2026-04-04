@@ -31,6 +31,8 @@ export type AppElements = {
   settingsIncrementInput: HTMLInputElement;
   settingsBotRow: HTMLLabelElement;
   settingsBotSelect: HTMLSelectElement;
+  settingsBotSeatRow: HTMLLabelElement;
+  settingsBotSeatSelect: HTMLSelectElement;
   settingsHint: HTMLParagraphElement;
   settingsCancelButton: HTMLButtonElement;
   settingsSaveButton: HTMLButtonElement;
@@ -78,6 +80,8 @@ export function getAppElements(): AppElements {
     settingsIncrementInput: requiredElement("settings-increment-input"),
     settingsBotRow: requiredElement("settings-bot-row"),
     settingsBotSelect: requiredElement("settings-bot-select"),
+    settingsBotSeatRow: requiredElement("settings-bot-seat-row"),
+    settingsBotSeatSelect: requiredElement("settings-bot-seat-select"),
     settingsHint: requiredElement("settings-hint"),
     settingsCancelButton: requiredElement("settings-cancel-button"),
     settingsSaveButton: requiredElement("settings-save-button"),

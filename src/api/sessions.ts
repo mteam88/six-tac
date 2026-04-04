@@ -1,6 +1,7 @@
+import { getAvailableBot } from "../backend-bots";
 import { startClock } from "../domain/clock";
 import { createSession, createToken, generateCode } from "../domain/session-state";
-import type { BotName, ClockSettings, JoinSessionResponse, SessionData } from "../domain/types";
+import type { BotName, ClockSettings, HumanSeat, JoinSessionResponse, SessionData } from "../domain/types";
 import type { Env } from "../env";
 import { forwardedHeaders, json, readJson, sessionStub } from "./utils";
 
@@ -73,7 +74,16 @@ export async function handleCreateBotSession(request: Request, env: Env): Promis
     playerId?: string | null;
     botName?: BotName;
     clock?: ClockSettings | null;
+    humanSeat?: HumanSeat;
   }>(request);
+  const botName = body.botName ?? "sprout";
+  const bot = await getAvailableBot(env, botName);
+  if (!bot?.available) {
+    return json({ error: `${botName} is not available on this backend` }, 400);
+  }
+
+  const humanSeat: HumanSeat = body.humanSeat === "one" ? "one" : "two";
+  const botSeat: HumanSeat = humanSeat === "one" ? "two" : "one";
   const token = createToken();
   const now = Date.now();
   const session = createSession(
@@ -85,16 +95,18 @@ export async function handleCreateBotSession(request: Request, env: Env): Promis
         {
           id: body.playerId || crypto.randomUUID(),
           kind: "human",
-          seat: "two",
+          seat: humanSeat,
           token,
           playerId: body.playerId ?? null,
         },
         {
           id: `bot-${crypto.randomUUID()}`,
           kind: "bot",
-          seat: "one",
+          seat: botSeat,
           botConfig: {
-            name: body.botName ?? "sprout",
+            name: bot.name,
+            version: bot.version,
+            execution: bot.execution,
           },
         },
       ],
@@ -104,7 +116,7 @@ export async function handleCreateBotSession(request: Request, env: Env): Promis
     now,
   );
 
-  startClock(session.clock, "two", now);
+  startClock(session.clock, "one", now);
 
   const response = await initSession(env, session);
   if (!response.ok) {
