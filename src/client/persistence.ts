@@ -35,6 +35,7 @@ function sanitizeBotName(botName: BotName | undefined): BotName {
     || botName === "hydra"
     || botName === "orca"
     || botName === "kraken"
+    || botName === "hexgo"
     || botName === "sprout"
     ? botName
     : "sprout";

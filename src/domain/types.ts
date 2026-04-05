@@ -4,7 +4,7 @@ export type Player = "One" | "Two";
 export type SessionMode = "local" | "private" | "bot" | "matchmade";
 export type SessionStatus = "waiting" | "active" | "finished" | "abandoned";
 export type FinishReason = "win" | "timeout" | "abandoned" | null;
-export type BotName = "sprout" | "seal" | "ambrosia" | "hydra" | "orca" | "kraken";
+export type BotName = "sprout" | "seal" | "ambrosia" | "hydra" | "orca" | "kraken" | "hexgo";
 export type BotExecution = "browser" | "worker" | "remote";
 
 export type BotCatalogEntry = {

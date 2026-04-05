@@ -4,3 +4,6 @@
 [submodule "bots/vendor/KrakenBot"]
 	path = bots/vendor/KrakenBot
 	url = https://github.com/Ramora0/KrakenBot
+[submodule "bots/vendor/hexgo"]
+	path = bots/vendor/hexgo
+	url = https://github.com/sub-surface/hexgo

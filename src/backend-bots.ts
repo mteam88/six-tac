@@ -45,6 +45,7 @@ function embeddedBotSet(): Set<BotName> {
 
 function normalizeRemoteBots(payload: RemoteBotListPayload, env: Env): BotCatalogEntry[] {
   const krakenVersion = env.KRAKEN_MODEL_VERSION?.trim() || "kraken_v1";
+  const hexgoVersion = env.HEXGO_MODEL_VERSION?.trim() || "net_gen0222";
   const bots = payload.bots ?? [];
   const entries: BotCatalogEntry[] = [];
 
@@ -53,7 +54,7 @@ function normalizeRemoteBots(payload: RemoteBotListPayload, env: Env): BotCatalo
       if (!BOT_ORDER.includes(bot)) continue;
       entries.push(buildBotCatalogEntry(bot, {
         execution: "remote",
-        version: bot === "kraken" ? krakenVersion : "builtin",
+        version: bot === "kraken" ? krakenVersion : bot === "hexgo" ? hexgoVersion : "builtin",
       }));
       continue;
     }
@@ -67,7 +68,7 @@ function normalizeRemoteBots(payload: RemoteBotListPayload, env: Env): BotCatalo
 
     entries.push(buildBotCatalogEntry(bot.name, {
       execution: "remote",
-      version: bot.version?.trim() || (bot.name === "kraken" ? krakenVersion : "builtin"),
+      version: bot.version?.trim() || (bot.name === "kraken" ? krakenVersion : bot.name === "hexgo" ? hexgoVersion : "builtin"),
     }));
   }
 

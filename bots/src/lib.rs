@@ -1,6 +1,8 @@
 mod ambrosia;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod arena;
+#[cfg(not(target_arch = "wasm32"))]
+mod hexgo;
 mod hydra;
 #[cfg(not(target_arch = "wasm32"))]
 mod kraken;
@@ -9,7 +11,9 @@ mod seal_vendor;
 mod shared;
 
 use hex_tic_tac_engine::{Cube, Game};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
+use serde::{Deserializer, Serializer};
 use std::fmt;
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
@@ -34,6 +38,7 @@ pub enum BotName {
     Hydra,
     Orca,
     Kraken,
+    Hexgo,
 }
 
 impl BotName {
@@ -47,13 +52,14 @@ impl BotName {
     ];
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Sprout,
         Self::Seal,
         Self::Ambrosia,
         Self::Hydra,
         Self::Orca,
         Self::Kraken,
+        Self::Hexgo,
     ];
 
     #[must_use]
@@ -65,6 +71,7 @@ impl BotName {
             Self::Hydra => "hydra",
             Self::Orca => "orca",
             Self::Kraken => "kraken",
+            Self::Hexgo => "hexgo",
         }
     }
 }
@@ -80,6 +87,7 @@ impl FromStr for BotName {
             "hydra" => Ok(Self::Hydra),
             "orca" => Ok(Self::Orca),
             "kraken" => Ok(Self::Kraken),
+            "hexgo" => Ok(Self::Hexgo),
             _ => Err(format!("unknown bot: {value}")),
         }
     }
@@ -97,6 +105,9 @@ pub enum BotParams {
     #[default]
     None,
     Kraken {
+        sims: usize,
+    },
+    Hexgo {
         sims: usize,
     },
 }
@@ -123,6 +134,14 @@ impl BotSpec {
         Self {
             name: BotName::Kraken,
             params: BotParams::Kraken { sims },
+        }
+    }
+
+    #[must_use]
+    pub const fn hexgo_with_sims(sims: usize) -> Self {
+        Self {
+            name: BotName::Hexgo,
+            params: BotParams::Hexgo { sims },
         }
     }
 }
@@ -162,7 +181,7 @@ impl FromStr for BotSpec {
         }
 
         match name {
-            BotName::Kraken => {
+            BotName::Kraken | BotName::Hexgo => {
                 let mut sims = None;
                 for part in params_text.split(',') {
                     let (key, raw_value) = part
@@ -179,21 +198,23 @@ impl FromStr for BotSpec {
                                 format!("invalid sims value '{raw_value}': {error}")
                             })?;
                             if parsed == 0 {
-                                return Err("kraken sims must be at least 1".to_string());
+                                return Err(format!("{name} sims must be at least 1"));
                             }
                             sims = Some(parsed);
                         }
-                        _ => {
-                            return Err(format!("unknown parameter '{key}' for bot {name}"));
-                        }
+                        _ => return Err(format!("unknown parameter '{key}' for bot {name}")),
                     }
                 }
 
                 if let Some(sims) = sims {
-                    spec.params = BotParams::Kraken { sims };
+                    spec.params = match name {
+                        BotName::Kraken => BotParams::Kraken { sims },
+                        BotName::Hexgo => BotParams::Hexgo { sims },
+                        _ => unreachable!(),
+                    };
                     Ok(spec)
                 } else {
-                    Err(format!("kraken bot specs must include sims=...: {value}"))
+                    Err(format!("{name} bot specs must include sims=...: {value}"))
                 }
             }
             _ => Err(format!("bot {name} does not accept parameters: {value}")),
@@ -206,7 +227,9 @@ impl fmt::Display for BotSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.params {
             BotParams::None => write!(f, "{}", self.name),
-            BotParams::Kraken { sims } => write!(f, "{}@sims={sims}", self.name),
+            BotParams::Kraken { sims } | BotParams::Hexgo { sims } => {
+                write!(f, "{}@sims={sims}", self.name)
+            }
         }
     }
 }
@@ -245,7 +268,35 @@ pub fn choose_move_cached(
 ) -> Result<[Cube; 2], String> {
     match bot_name {
         BotName::Kraken => kraken::choose_kraken_move_cached(game, cache_key),
+        BotName::Hexgo => hexgo::choose_hexgo_move_cached(game, cache_key),
         _ => choose_move(bot_name, game),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn choose_move_for_spec_cached(
+    spec: BotSpec,
+    game: &Game,
+    cache_key: Option<&str>,
+) -> Result<[Cube; 2], String> {
+    match spec {
+        BotSpec {
+            name: BotName::Kraken,
+            params: BotParams::Kraken { sims },
+        } => kraken::choose_kraken_move_cached_with_sims(game, cache_key, Some(sims)),
+        BotSpec {
+            name: BotName::Kraken,
+            params: BotParams::None,
+        } => kraken::choose_kraken_move_cached(game, cache_key),
+        BotSpec {
+            name: BotName::Hexgo,
+            params: BotParams::Hexgo { sims },
+        } => hexgo::choose_hexgo_move_cached_with_sims(game, cache_key, Some(sims)),
+        BotSpec {
+            name: BotName::Hexgo,
+            params: BotParams::None,
+        } => hexgo::choose_hexgo_move_cached(game, cache_key),
+        BotSpec { name, .. } => choose_move(name, game),
     }
 }
 
@@ -265,6 +316,7 @@ pub fn choose_move_cached_peek(
 pub fn choose_move_uncached(bot_name: BotName, game: &Game) -> Result<[Cube; 2], String> {
     match bot_name {
         BotName::Kraken => kraken::choose_kraken_move_uncached(game),
+        BotName::Hexgo => hexgo::choose_hexgo_move_uncached(game),
         _ => choose_move(bot_name, game),
     }
 }
@@ -273,6 +325,7 @@ pub fn choose_move_uncached(bot_name: BotName, game: &Game) -> Result<[Cube; 2],
 pub fn is_bot_available(bot_name: BotName) -> bool {
     match bot_name {
         BotName::Kraken => kraken::is_kraken_available(),
+        BotName::Hexgo => hexgo::is_hexgo_available(),
         _ => true,
     }
 }
@@ -290,10 +343,14 @@ pub(crate) fn choose_move_with_rng<R: shared::IndexRng>(
         BotName::Orca => orca::choose_orca_move(game),
         #[cfg(not(target_arch = "wasm32"))]
         BotName::Kraken => kraken::choose_kraken_move(game),
+        #[cfg(not(target_arch = "wasm32"))]
+        BotName::Hexgo => hexgo::choose_hexgo_move(game),
         #[cfg(target_arch = "wasm32")]
         BotName::Kraken => {
             Err("kraken is only available through the native bot service".to_string())
         }
+        #[cfg(target_arch = "wasm32")]
+        BotName::Hexgo => Err("hexgo is only available through the native bot service".to_string()),
     }
 }
 
@@ -312,6 +369,14 @@ pub(crate) fn choose_move_for_spec_with_rng<R: shared::IndexRng>(
             name: BotName::Kraken,
             params: BotParams::None,
         } => kraken::choose_kraken_move(game),
+        BotSpec {
+            name: BotName::Hexgo,
+            params: BotParams::Hexgo { sims },
+        } => hexgo::choose_hexgo_move_with_sims(game, sims),
+        BotSpec {
+            name: BotName::Hexgo,
+            params: BotParams::None,
+        } => hexgo::choose_hexgo_move(game),
         BotSpec { name, .. } => choose_move_with_rng(name, game, rng),
     }
 }
@@ -372,6 +437,7 @@ mod tests {
         assert_eq!(BotName::from_str("hydra").unwrap(), BotName::Hydra);
         assert_eq!(BotName::from_str("orca").unwrap(), BotName::Orca);
         assert_eq!(BotName::from_str("kraken").unwrap(), BotName::Kraken);
+        assert_eq!(BotName::from_str("hexgo").unwrap(), BotName::Hexgo);
         assert!(BotName::from_str("abrosia").is_err());
     }
 
@@ -390,8 +456,13 @@ mod tests {
             BotSpec::from_str("kraken@n_sims=800").unwrap(),
             BotSpec::kraken_with_sims(800)
         );
+        assert_eq!(
+            BotSpec::from_str("hexgo@sims=150").unwrap(),
+            BotSpec::hexgo_with_sims(150)
+        );
         assert!(BotSpec::from_str("hydra@sims=10").is_err());
         assert!(BotSpec::from_str("kraken@depth=4").is_err());
+        assert!(BotSpec::from_str("hexgo@depth=4").is_err());
     }
 
     #[test]
@@ -399,7 +470,9 @@ mod tests {
         let game = Game::new();
         for bot in BotName::ALL {
             #[cfg(not(target_arch = "wasm32"))]
-            if bot == BotName::Kraken && !crate::kraken::is_kraken_available() {
+            if (bot == BotName::Kraken && !crate::kraken::is_kraken_available())
+                || (bot == BotName::Hexgo && !crate::hexgo::is_hexgo_available())
+            {
                 continue;
             }
 

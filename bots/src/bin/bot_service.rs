@@ -8,7 +8,7 @@ fn main() {
 mod native {
     use hex_tic_tac_engine::Game;
     use serde::{Deserialize, Serialize};
-    use six_tac_bots::{choose_move_cached, is_bot_available, BotName};
+    use six_tac_bots::{choose_move_for_spec_cached, is_bot_available, BotName, BotSpec};
     use std::str::FromStr;
     use tiny_http::{Header, Method, Response, Server, StatusCode};
 
@@ -58,11 +58,12 @@ mod native {
                         .copied()
                         .map(|bot_name| BotListEntry {
                             name: bot_name,
-                            version: if bot_name == BotName::Kraken {
-                                std::env::var("KRAKEN_MODEL_VERSION")
-                                    .unwrap_or_else(|_| "kraken_v1".to_string())
-                            } else {
-                                "builtin".to_string()
+                            version: match bot_name {
+                                BotName::Kraken => std::env::var("KRAKEN_MODEL_VERSION")
+                                    .unwrap_or_else(|_| "kraken_v1".to_string()),
+                                BotName::Hexgo => std::env::var("HEXGO_MODEL_VERSION")
+                                    .unwrap_or_else(|_| "net_gen0222".to_string()),
+                                _ => "builtin".to_string(),
                             },
                             available: is_bot_available(bot_name),
                         })
@@ -91,14 +92,14 @@ mod native {
                 .map_err(|error| error.to_string())?;
             let payload =
                 serde_json::from_str::<MoveRequest>(&body).map_err(|error| error.to_string())?;
-            let bot_name = BotName::from_str(&payload.bot_name)?;
+            let bot_spec = BotSpec::from_str(&payload.bot_name)?;
             let game = if payload.game_json.trim().is_empty() {
                 Game::new()
             } else {
                 Game::from_json_str(&payload.game_json).map_err(|error| error.to_string())?
             };
             Ok(MoveResponse {
-                stones: choose_move_cached(bot_name, &game, payload.cache_key.as_deref())?,
+                stones: choose_move_for_spec_cached(bot_spec, &game, payload.cache_key.as_deref())?,
             })
         })();
 

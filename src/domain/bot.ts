@@ -51,9 +51,16 @@ export const BOT_METADATA: Record<BotName, BotMetadata> = {
     execution: "remote",
     offlineCapable: false,
   },
+  hexgo: {
+    name: "hexgo",
+    label: "HexGo",
+    description: "Hosted sub-surface/hexgo net.py checkpoint via the native Rust + Python bridge.",
+    execution: "remote",
+    offlineCapable: false,
+  },
 };
 
-export const BOT_ORDER: BotName[] = ["sprout", "seal", "ambrosia", "hydra", "orca", "kraken"];
+export const BOT_ORDER: BotName[] = ["sprout", "seal", "ambrosia", "hydra", "orca", "kraken", "hexgo"];
 
 export function botLabel(botName: BotName): string {
   return BOT_METADATA[botName].label;

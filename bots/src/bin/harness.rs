@@ -430,11 +430,14 @@ Bot specs:
   hydra
   kraken@sims=200
   kraken@sims=800
+  hexgo@sims=50
+  hexgo@sims=150
 
 Examples:
   cargo run --manifest-path bots/Cargo.toml --bin harness -- match hydra seal --games 1000 --export-dir out/games
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo hydra kraken@sims=200 kraken@sims=800 --games 200 --export-dir out/elo-games
-  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare kraken@sims=400 kraken@sims=800 --games 1000 --batch-size 100 --min-games 200"
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- elo hydra kraken@sims=200 kraken@sims=800 hexgo@sims=100 --games 200 --export-dir out/elo-games
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare kraken@sims=400 kraken@sims=800 --games 1000 --batch-size 100 --min-games 200
+  cargo run --manifest-path bots/Cargo.toml --bin harness -- compare hexgo@sims=50 hexgo@sims=150 --games 1000 --batch-size 100 --min-games 200"
     }
 }
 

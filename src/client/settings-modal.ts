@@ -19,7 +19,7 @@ export type SettingsResult = {
 
 function defaultAvailableBots(): BotCatalogEntry[] {
   return BOT_ORDER
-    .filter((botName) => botName !== "kraken")
+    .filter((botName) => botName !== "kraken" && botName !== "hexgo")
     .map((botName) => buildBotCatalogEntry(botName, { version: "builtin" }));
 }
 

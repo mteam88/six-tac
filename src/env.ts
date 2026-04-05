@@ -14,4 +14,11 @@ export type Env = {
   KRAKEN_TORCH_THREADS?: string;
   KRAKEN_BUILD_EXTENSIONS?: string;
   KRAKEN_MOVE_TIMEOUT_MS?: string;
+  HEXGO_DEVICE?: string;
+  HEXGO_MODEL_PATH?: string;
+  HEXGO_MODEL_VERSION?: string;
+  HEXGO_N_SIMS?: string;
+  HEXGO_PYTHON_EXECUTABLE?: string;
+  HEXGO_TORCH_THREADS?: string;
+  HEXGO_MOVE_TIMEOUT_MS?: string;
 };

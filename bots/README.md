@@ -6,7 +6,7 @@ Separate Rust/WASM bot crate for Six Tac.
 - native builds compile a small C ABI bridge directly against the upstream C++ engine
 - wasm builds require Emscripten (`em++`) and emit `bots/generated/sealbot.js` during `cargo build`
 
-`kraken` is vendored from `bots/vendor/KrakenBot` and now runs through the original Python/PyTorch implementation behind a thin Rust translator. Because the neural MCTS stack is far heavier than the other bots, it is exposed through the native harness and the optional Rust HTTP bot service / Cloudflare Container runtime rather than the embedded wasm bundle.
+`kraken` is vendored from `bots/vendor/KrakenBot` and now runs through the original Python/PyTorch implementation behind a thin Rust translator. `hexgo` is vendored as the `bots/vendor/hexgo` git submodule from `sub-surface/hexgo` and likewise runs through the original Python/PyTorch implementation behind a thin Rust translator. Because both neural stacks are far heavier than the other bots, they are exposed through the native harness and the optional Rust HTTP bot service / Cloudflare Container runtime rather than the embedded wasm bundle.
 
 ## Bots
 
@@ -24,6 +24,11 @@ Separate Rust/WASM bot crate for Six Tac.
   - persistent Python worker per calling thread, so the model stays loaded across requests
   - uses the original KrakenBot search/inference code instead of a Rust reimplementation
   - compatibility wrapper for Six Tac's implied opening and max-distance move rule
+- `hexgo`: sub-surface/hexgo running directly via Python + PyTorch
+  - vendored as a git submodule for fidelity and easy upstream syncs
+  - thin Rust bridge that translates Six Tac turn-list JSON into HexGo's native `HexGame`
+  - reuses upstream `net.py` + `mcts.py` with the supplied `net_gen0222.pt` checkpoint
+  - served through the same native bot service registry as Kraken
 
 The bot crate is intentionally separate from `engine/`, while reusing the core engine as a library.
 
@@ -51,20 +56,22 @@ List available bots:
 cargo run --release --manifest-path bots/Cargo.toml --bin harness -- list
 ```
 
-Run the native HTTP bot service used by the Worker-backed frontend for heavy bots like Kraken:
+Run the native HTTP bot service used by the Worker-backed frontend for heavy bots like Kraken and HexGo:
 
 ```bash
 export KRAKEN_MODEL_PATH=/Users/mte/Downloads/kraken_v1.pt
+export HEXGO_MODEL_PATH=/Users/mte/Downloads/net_gen0222.pt
 cargo run --release --manifest-path bots/Cargo.toml --bin bot_service
 ```
 
 Notes:
-- Kraken now launches the vendored Python worker through `uv run --with torch --with numpy ...`
-- override the launcher with `KRAKEN_PYTHON_EXECUTABLE=/path/to/python` if you already have a Python env with PyTorch installed
-- set `KRAKEN_DEVICE=mps`, `cuda`, or `cpu` to force a PyTorch device; otherwise KrakenBot auto-detects
-- set `KRAKEN_N_SIMS` to override the default 200 MCTS simulations
-- on MPS, the worker defaults to `KRAKEN_TORCH_THREADS=1` to reduce CPU-side overhead; override if you want to sweep thread counts
-- the worker will try to build KrakenBot's optional Cython MCTS extensions on first launch (`KRAKEN_BUILD_EXTENSIONS=0` disables that)
+- Kraken launches the vendored Python worker through `uv run --with torch --with numpy ...`
+- HexGo launches the vendored Python worker through `uv run --with torch --with numpy python ...`
+- override the launchers with `KRAKEN_PYTHON_EXECUTABLE=/path/to/python` and/or `HEXGO_PYTHON_EXECUTABLE=/path/to/python` if you already have a Python env with PyTorch installed
+- set `KRAKEN_DEVICE` / `HEXGO_DEVICE` to `mps`, `cuda`, or `cpu` to force a PyTorch device; otherwise each worker auto-detects
+- set `KRAKEN_N_SIMS` (default 200) and `HEXGO_N_SIMS` (default 100) to tune search depth
+- on MPS, the workers default to `*_TORCH_THREADS=1` to reduce CPU-side overhead; override if you want to sweep thread counts
+- Kraken will try to build its optional Cython MCTS extensions on first launch (`KRAKEN_BUILD_EXTENSIONS=0` disables that)
 
 ## Cloudflare Container deployment
 
@@ -87,12 +94,16 @@ Deployment notes:
 
 - Add a truly stateful hosted Kraken runtime so each game can reuse search/tree state instead of rebuilding from full `game_json` every turn.
 
-Benchmark Kraken latency directly:
+Benchmark neural bot latency directly:
 
 ```bash
 export KRAKEN_MODEL_PATH=/Users/mte/Downloads/kraken_v1.pt
 cargo run --release --manifest-path bots/Cargo.toml --bin kraken_bench -- --iterations 5 --json
 cargo run --release --manifest-path bots/Cargo.toml --bin kraken_bench -- --iterations 5 --uncached --json
+
+export HEXGO_MODEL_PATH=/Users/mte/Downloads/net_gen0222.pt
+cargo run --release --manifest-path bots/Cargo.toml --bin hexgo_bench -- --iterations 5 --json
+cargo run --release --manifest-path bots/Cargo.toml --bin hexgo_bench -- --iterations 5 --uncached --json
 ```
 
 Run ELO for all bots:
@@ -104,7 +115,8 @@ cargo run --release --manifest-path bots/Cargo.toml --bin harness -- elo all --g
 The harness also accepts configured bot specs, so you can rate parameter variants separately:
 
 ```bash
-cargo run --release --manifest-path bots/Cargo.toml --bin harness -- elo hydra kraken@sims=200 kraken@sims=800 --games 200
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- elo hydra kraken@sims=200 kraken@sims=800 hexgo@sims=100 --games 200
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- elo hexgo@sims=50 hexgo@sims=150 --games 200
 ```
 
 Run a head-to-head comparison with confidence bounds:
@@ -112,6 +124,7 @@ Run a head-to-head comparison with confidence bounds:
 ```bash
 cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare orca seal --games 1000 --batch-size 100 --min-games 200
 cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare kraken@sims=400 kraken@sims=800 --games 1000 --batch-size 100 --min-games 200
+cargo run --release --manifest-path bots/Cargo.toml --bin harness -- compare hexgo@sims=50 hexgo@sims=150 --games 1000 --batch-size 100 --min-games 200
 ```
 
 Export finished games in the frontend import format:

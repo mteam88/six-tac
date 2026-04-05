@@ -17,7 +17,7 @@ Credit to [@webgoatguy](https://www.youtube.com/@webgoatguy) on Youtube: [https:
 - Fully offline local games after the app has been loaded once
 - Create a room
 - Join with a 6 digit code
-- Play against integrated bots (`sprout`, `seal`, `ambrosia`, `hydra`, `orca`, `kraken`), with a choice of whether you or the bot moves first
+- Play against integrated bots (`sprout`, `seal`, `ambrosia`, `hydra`, `orca`, `kraken`, `hexgo`), with a choice of whether you or the bot moves first
 - Anonymous matchmaking
 - Fully configurable chess clocks for online games
 - No usernames or accounts
@@ -46,33 +46,41 @@ Then open the Wrangler URL shown in the terminal.
 - `available`
 - `offlineCapable`
 
-The Worker uses that registry to decide whether a bot runs in Worker wasm or in the hosted Kraken runtime.
+The Worker uses that registry to decide whether a bot runs in Worker wasm or in a hosted native runtime.
 
-## Kraken bot service
+## Native bot service
 
-Kraken runs through the native Rust bot service rather than the embedded Worker/browser wasm path.
+Kraken and HexGo run through the native Rust bot service rather than the embedded Worker/browser wasm path.
 The existing wasm build still works for the lighter bots.
 
-Kraken now runs through the original vendored **Ramora0 KrakenBot Python/PyTorch implementation** behind a thin native Rust bridge.
+- Kraken runs through the original vendored **Ramora0 KrakenBot Python/PyTorch implementation** behind a thin native Rust bridge.
+- HexGo runs through the vendored **sub-surface/hexgo net.py checkpoint stack** behind a matching native Rust bridge.
 
 ### Local native dev service
 
-Start the native service with the creator checkpoint:
+Start the native service with the creator checkpoints:
 
 ```bash
 export KRAKEN_MODEL_PATH=/Users/mte/Downloads/kraken_v1.pt
+export HEXGO_MODEL_PATH=/Users/mte/Downloads/net_gen0222.pt
 npm run bot-service
 ```
 
 Useful overrides:
 
 ```bash
-export KRAKEN_DEVICE=mps   # or cuda / cpu
+export KRAKEN_DEVICE=mps
 export KRAKEN_N_SIMS=200
 export KRAKEN_TORCH_THREADS=1
-# optional if you already have a Python env with torch installed
+export HEXGO_DEVICE=mps
+export HEXGO_N_SIMS=100
+export HEXGO_TORCH_THREADS=1
+
 export KRAKEN_PYTHON_EXECUTABLE=/path/to/python
+export HEXGO_PYTHON_EXECUTABLE=/path/to/python
 ```
+
+The native harness/service also understands configured bot specs like `kraken@sims=400` and `hexgo@sims=150` on the native side.
 
 Then point the Worker at it with a Wrangler binding:
 
@@ -128,6 +136,6 @@ npm run deploy
 
 - Static assets are built into `public/`.
 - The Rust engine is compiled to `wasm32-unknown-unknown` and bound both into the Worker and the browser with `wasm-bindgen`.
-- The light bots stay embedded in the Worker/browser wasm bundle; Kraken is exposed through a native Rust HTTP bot service that forwards to the original vendored KrakenBot Python worker loaded from the creator checkpoint.
+- The light bots stay embedded in the Worker/browser wasm bundle; Kraken and HexGo are exposed through a native Rust HTTP bot service that forwards to their original vendored Python workers loaded from the creator checkpoints.
 - A service worker caches the app shell and browser wasm so local games can resume offline after the first successful load.
 - Each online room is backed by a Durable Object instance keyed by the 6 digit room code.
