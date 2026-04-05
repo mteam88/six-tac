@@ -5,6 +5,7 @@ const KRAKEN_CONTAINER_PORT = 8788;
 const DEFAULT_KRAKEN_POOL_SIZE = 2;
 const DEFAULT_KRAKEN_MOVE_TIMEOUT_MS = 30_000;
 const DEFAULT_KRAKEN_MAX_ATTEMPTS = 2;
+const DEFAULT_NATIVE_BOT_CONTAINER_VERSION = "2026-04-05-hexgo-rollout-1";
 
 export class KrakenContainer extends Container {
   defaultPort = KRAKEN_CONTAINER_PORT;
@@ -46,20 +47,31 @@ function krakenMoveTimeoutMs(env: Env): number {
   return parsePositiveInt(env.KRAKEN_MOVE_TIMEOUT_MS, DEFAULT_KRAKEN_MOVE_TIMEOUT_MS);
 }
 
+function nativeBotContainerVersion(env: Env): string {
+  return (env.NATIVE_BOT_CONTAINER_VERSION || DEFAULT_NATIVE_BOT_CONTAINER_VERSION)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || DEFAULT_NATIVE_BOT_CONTAINER_VERSION;
+}
+
 function krakenContainerName(env: Env, cacheKey?: string, attempt = 0): string {
+  const version = nativeBotContainerVersion(env);
   const poolSize = krakenPoolSize(env);
   if (poolSize <= 1) {
-    return "kraken-0";
+    return `kraken-${version}-0`;
   }
   const baseShard = hashString(cacheKey || "kraken") % poolSize;
   const shard = (baseShard + attempt) % poolSize;
-  return `kraken-${shard}`;
+  return `kraken-${version}-${shard}`;
 }
 
 function buildStartEnv(env: Env): Record<string, string> {
   const vars: Record<string, string> = {
     BOT_SERVICE_ADDR: `0.0.0.0:${KRAKEN_CONTAINER_PORT}`,
     KRAKEN_BUILD_EXTENSIONS: env.KRAKEN_BUILD_EXTENSIONS || "0",
+    NATIVE_BOT_CONTAINER_VERSION: nativeBotContainerVersion(env),
     KRAKEN_DEVICE: env.KRAKEN_DEVICE || "cpu",
     KRAKEN_MODEL_VERSION: env.KRAKEN_MODEL_VERSION || "kraken_v1",
     KRAKEN_PYTHON_EXECUTABLE: env.KRAKEN_PYTHON_EXECUTABLE || "python3",

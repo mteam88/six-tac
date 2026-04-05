@@ -5,6 +5,7 @@ export type Env = {
   KRAKEN_CONTAINER?: DurableObjectNamespace;
   BOT_SERVICE_URL?: string;
   KRAKEN_CONTAINER_POOL_SIZE?: string;
+  NATIVE_BOT_CONTAINER_VERSION?: string;
   KRAKEN_DEVICE?: string;
   KRAKEN_MODEL_PATH?: string;
   KRAKEN_MODEL_URL?: string;
