@@ -18,6 +18,10 @@ export class KrakenContainer extends Container {
     KRAKEN_MODEL_VERSION: "kraken_v1",
     KRAKEN_PYTHON_EXECUTABLE: "python3",
     KRAKEN_MOVE_TIMEOUT_MS: String(DEFAULT_KRAKEN_MOVE_TIMEOUT_MS),
+    HEXGO_DEVICE: "cpu",
+    HEXGO_MODEL_VERSION: "net_gen0222",
+    HEXGO_PYTHON_EXECUTABLE: "python3",
+    HEXGO_MOVE_TIMEOUT_MS: String(DEFAULT_KRAKEN_MOVE_TIMEOUT_MS),
   };
 }
 
@@ -60,6 +64,10 @@ function buildStartEnv(env: Env): Record<string, string> {
     KRAKEN_MODEL_VERSION: env.KRAKEN_MODEL_VERSION || "kraken_v1",
     KRAKEN_PYTHON_EXECUTABLE: env.KRAKEN_PYTHON_EXECUTABLE || "python3",
     KRAKEN_MOVE_TIMEOUT_MS: String(krakenMoveTimeoutMs(env)),
+    HEXGO_DEVICE: env.HEXGO_DEVICE || "cpu",
+    HEXGO_MODEL_VERSION: env.HEXGO_MODEL_VERSION || "net_gen0222",
+    HEXGO_PYTHON_EXECUTABLE: env.HEXGO_PYTHON_EXECUTABLE || "python3",
+    HEXGO_MOVE_TIMEOUT_MS: env.HEXGO_MOVE_TIMEOUT_MS || String(krakenMoveTimeoutMs(env)),
   };
 
   if (env.KRAKEN_MODEL_PATH) {
@@ -73,6 +81,18 @@ function buildStartEnv(env: Env): Record<string, string> {
   }
   if (env.KRAKEN_TORCH_THREADS) {
     vars.KRAKEN_TORCH_THREADS = env.KRAKEN_TORCH_THREADS;
+  }
+  if (env.HEXGO_MODEL_PATH) {
+    vars.HEXGO_MODEL_PATH = env.HEXGO_MODEL_PATH;
+  }
+  if (env.HEXGO_MODEL_URL) {
+    vars.HEXGO_MODEL_URL = env.HEXGO_MODEL_URL;
+  }
+  if (env.HEXGO_N_SIMS) {
+    vars.HEXGO_N_SIMS = env.HEXGO_N_SIMS;
+  }
+  if (env.HEXGO_TORCH_THREADS) {
+    vars.HEXGO_TORCH_THREADS = env.HEXGO_TORCH_THREADS;
   }
 
   return vars;

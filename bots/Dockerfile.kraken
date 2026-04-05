@@ -36,7 +36,12 @@ ENV PYTHONUNBUFFERED=1 \
     KRAKEN_BUILD_EXTENSIONS=0 \
     KRAKEN_DEVICE=cpu \
     KRAKEN_MODEL_PATH=/app/bots/models/kraken_v1.pt \
-    KRAKEN_PYTHON_EXECUTABLE=python3
+    KRAKEN_MODEL_VERSION=kraken_v1 \
+    KRAKEN_PYTHON_EXECUTABLE=python3 \
+    HEXGO_DEVICE=cpu \
+    HEXGO_MODEL_PATH=/app/bots/models/net_gen0222.pt \
+    HEXGO_MODEL_VERSION=net_gen0222 \
+    HEXGO_PYTHON_EXECUTABLE=python3
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

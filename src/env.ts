@@ -16,6 +16,7 @@ export type Env = {
   KRAKEN_MOVE_TIMEOUT_MS?: string;
   HEXGO_DEVICE?: string;
   HEXGO_MODEL_PATH?: string;
+  HEXGO_MODEL_URL?: string;
   HEXGO_MODEL_VERSION?: string;
   HEXGO_N_SIMS?: string;
   HEXGO_PYTHON_EXECUTABLE?: string;

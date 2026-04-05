@@ -75,7 +75,7 @@ Notes:
 
 ## Cloudflare Container deployment
 
-The Worker can now host Kraken through a Cloudflare Container-backed Durable Object (`KrakenContainer`).
+The Worker can now host Kraken and HexGo through the Cloudflare Container-backed Durable Object (`KrakenContainer`).
 
 Files involved:
 - `bots/Dockerfile.kraken`
@@ -84,15 +84,15 @@ Files involved:
 - `wrangler.toml`
 
 Deployment notes:
-- bundle a checkpoint at `bots/models/kraken_v1.pt`, or set `KRAKEN_MODEL_URL` so the container downloads the model on first boot
-- `KRAKEN_MODEL_VERSION` controls the bot registry version exposed by `/api/v1/bots`
-- `KRAKEN_CONTAINER_POOL_SIZE` controls how many deterministic Kraken shards the Worker routes across
+- bundle checkpoints at `bots/models/kraken_v1.pt` and/or `bots/models/net_gen0222.pt`, or set `KRAKEN_MODEL_URL` / `HEXGO_MODEL_URL` so the container downloads them on first boot
+- `KRAKEN_MODEL_VERSION` and `HEXGO_MODEL_VERSION` control the bot registry versions exposed by `/api/v1/bots`
+- `KRAKEN_CONTAINER_POOL_SIZE` controls how many deterministic native-bot shards the Worker routes across
 - `npm run deploy` will deploy the Worker and the configured container image together
 - Wrangler needs a working local Docker CLI/daemon when building and uploading the container image
 
 ## TODO
 
-- Add a truly stateful hosted Kraken runtime so each game can reuse search/tree state instead of rebuilding from full `game_json` every turn.
+- Add a truly stateful hosted native runtime so each game can reuse search/tree state instead of rebuilding from full `game_json` every turn.
 
 Benchmark neural bot latency directly:
 

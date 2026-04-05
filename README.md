@@ -91,14 +91,15 @@ npm run dev
 
 ### Cloudflare Containers deployment
 
-Production Kraken hosting now uses a Cloudflare Container-backed Durable Object (`KrakenContainer`).
+Production hosting for the heavy native bots now uses the Cloudflare Container-backed Durable Object (`KrakenContainer`). Despite the legacy name, the same container runtime now serves both Kraken and HexGo through the native Rust bot service.
 
-1. Make the model available to the container:
-   - easiest: copy it to `bots/models/kraken_v1.pt` before deploying, or
-   - set a Worker secret so the container downloads it on first start:
+1. Make the model(s) available to the container:
+   - easiest: copy them into `bots/models/` before deploying, or
+   - set Worker secrets so the container downloads them on first start:
 
 ```bash
 wrangler secret put KRAKEN_MODEL_URL
+wrangler secret put HEXGO_MODEL_URL
 ```
 
 2. Optionally tune runtime vars in `wrangler.toml` or secrets/vars:
@@ -110,6 +111,9 @@ KRAKEN_CONTAINER_POOL_SIZE = "2"
 KRAKEN_DEVICE = "cpu"
 KRAKEN_BUILD_EXTENSIONS = "0"
 KRAKEN_MOVE_TIMEOUT_MS = "30000"
+HEXGO_MODEL_VERSION = "net_gen0222"
+HEXGO_DEVICE = "cpu"
+HEXGO_MOVE_TIMEOUT_MS = "30000"
 ```
 
 3. Deploy everything together:
@@ -120,11 +124,11 @@ npm run deploy
 
 Wrangler needs a working local Docker CLI/daemon to build and upload the Kraken container image.
 
-That deploys the Worker, assets, Durable Object migrations, and the Kraken container image defined in `bots/Dockerfile.kraken`.
+That deploys the Worker, assets, Durable Object migrations, and the native bot container image defined in `bots/Dockerfile.kraken`.
 
-The Worker keeps the public API the same and forwards Kraken turns internally to the container runtime.
+The Worker keeps the public API the same and forwards Kraken and HexGo turns internally to the container runtime.
 
-Remote bot turns now run with a 30s timeout, automatically restart/retry once on transient container failures, and continue in the background so the player move request does not stay blocked waiting for Kraken.
+Remote bot turns now run with a 30s timeout, automatically restart/retry once on transient container failures, and continue in the background so the player move request does not stay blocked waiting for the native bot runtime.
 
 ## Deploy
 

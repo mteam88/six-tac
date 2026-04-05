@@ -90,14 +90,21 @@ function uniqueBots(botEntries: BotCatalogEntry[]): BotCatalogEntry[] {
 }
 
 async function listRemoteBots(env: Env): Promise<BotCatalogEntry[]> {
-  const baseUrl = remoteServiceBaseUrl(env);
-  if (!baseUrl) return [];
-
   if (remoteBotCache && Date.now() - remoteBotCache.at < REMOTE_BOT_LIST_TTL_MS) {
     return remoteBotCache.bots;
   }
 
-  const response = await fetch(`${baseUrl}/v1/bots`);
+  const baseUrl = remoteServiceBaseUrl(env);
+  const response = baseUrl
+    ? await fetch(`${baseUrl}/v1/bots`)
+    : hasKrakenContainer(env)
+      ? await fetchKrakenContainer(env, new Request("https://kraken.internal/v1/bots"))
+      : null;
+
+  if (!response) {
+    return [];
+  }
+
   const data = (await response.json()) as RemoteBotListPayload;
   if (!response.ok) {
     throw new Error(data.error || "Could not load remote bot list");
@@ -115,26 +122,9 @@ function listEmbeddedBots(): BotCatalogEntry[] {
     .map((botName) => buildBotCatalogEntry(botName, { execution: "worker", version: "builtin" }));
 }
 
-function listKrakenContainerBots(env: Env): BotCatalogEntry[] {
-  if (!hasKrakenContainer(env)) {
-    return [];
-  }
-
-  return [
-    buildBotCatalogEntry("kraken", {
-      execution: "remote",
-      version: env.KRAKEN_MODEL_VERSION?.trim() || "kraken_v1",
-    }),
-  ];
-}
-
 export async function listAvailableBots(env: Env): Promise<BotCatalogEntry[]> {
   const embedded = listEmbeddedBots();
-  const remote = remoteServiceBaseUrl(env)
-    ? await listRemoteBots(env).catch(() => [])
-    : hasKrakenContainer(env)
-      ? listKrakenContainerBots(env)
-      : [];
+  const remote = await listRemoteBots(env).catch(() => []);
   return uniqueBots([...embedded, ...remote]);
 }
 
@@ -204,7 +194,7 @@ async function chooseRemoteBotMove(
   const baseUrl = remoteServiceBaseUrl(env);
   const response = baseUrl
     ? await fetchRemoteBotServiceBestMove(baseUrl, body)
-    : botName === "kraken" && hasKrakenContainer(env)
+    : (botName === "kraken" || botName === "hexgo") && hasKrakenContainer(env)
       ? await fetchKrakenContainer(
           env,
           new Request("https://kraken.internal/v1/best-move", {
