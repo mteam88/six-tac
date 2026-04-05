@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -135,7 +136,15 @@ def main() -> int:
         net.load_state_dict(state)
         net.eval()
     except Exception as exc:
-        print(json.dumps({"ready": False, "error": str(exc)}), flush=True)
+        print(
+            json.dumps(
+                {
+                    "ready": False,
+                    "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+                }
+            ),
+            flush=True,
+        )
         return 1
 
     print(
@@ -164,7 +173,9 @@ def main() -> int:
                 raise RuntimeError(f"expected two stones from HexGo, got: {stones!r}")
             response = {"stones": [[int(q), int(r)] for q, r in stones]}
         except Exception as exc:
-            response = {"error": str(exc)}
+            response = {
+                "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+            }
         print(json.dumps(response), flush=True)
 
     return 0

@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import traceback
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -549,7 +550,15 @@ def main() -> int:
     try:
         bot = MCTSBot(model_path=model_path, n_sims=n_sims, device=device)
     except Exception as exc:
-        print(json.dumps({"ready": False, "error": str(exc)}), flush=True)
+        print(
+            json.dumps(
+                {
+                    "ready": False,
+                    "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+                }
+            ),
+            flush=True,
+        )
         return 1
 
     print(
@@ -620,7 +629,9 @@ def main() -> int:
         except Exception as exc:
             if cache_key is not None:
                 sessions.pop(cache_key, None)
-            response = {"error": str(exc)}
+            response = {
+                "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+            }
         print(json.dumps(response), flush=True)
 
     return 0
