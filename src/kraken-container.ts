@@ -110,8 +110,30 @@ function buildStartEnv(env: Env): Record<string, string> {
   return vars;
 }
 
-function cloneRequestWithSignal(request: Request, signal: AbortSignal): Request {
-  return new Request(request, { signal });
+type PreparedRequest = {
+  url: string;
+  method: string;
+  headers: Headers;
+  body: Uint8Array | null;
+};
+
+async function prepareRequest(request: Request): Promise<PreparedRequest> {
+  const body = request.body ? new Uint8Array(await request.clone().arrayBuffer()) : null;
+  return {
+    url: request.url,
+    method: request.method,
+    headers: new Headers(request.headers),
+    body,
+  };
+}
+
+function cloneRequestWithSignal(request: PreparedRequest, signal: AbortSignal): Request {
+  return new Request(request.url, {
+    method: request.method,
+    headers: new Headers(request.headers),
+    body: request.body ? request.body.slice() : undefined,
+    signal,
+  });
 }
 
 function isAbortError(error: unknown): boolean {
@@ -146,7 +168,7 @@ async function destroyContainerQuietly(container: ReturnType<typeof getContainer
 
 async function fetchKrakenContainerOnce(
   env: Env,
-  request: Request,
+  request: PreparedRequest,
   cacheKey: string | undefined,
   attempt: number,
   timeoutMs: number,
@@ -178,12 +200,13 @@ export async function fetchKrakenContainer(env: Env, request: Request, cacheKey?
     throw new Error("kraken container is not configured");
   }
 
+  const preparedRequest = await prepareRequest(request);
   const timeoutMs = krakenMoveTimeoutMs(env);
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < DEFAULT_KRAKEN_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const response = await fetchKrakenContainerOnce(env, request, cacheKey, attempt, timeoutMs);
+      const response = await fetchKrakenContainerOnce(env, preparedRequest, cacheKey, attempt, timeoutMs);
       if (!isRetryableStatus(response.status) || attempt === DEFAULT_KRAKEN_MAX_ATTEMPTS - 1) {
         return response;
       }
