@@ -5,7 +5,7 @@ const KRAKEN_CONTAINER_PORT = 8788;
 const DEFAULT_KRAKEN_POOL_SIZE = 2;
 const DEFAULT_KRAKEN_MOVE_TIMEOUT_MS = 30_000;
 const DEFAULT_KRAKEN_MAX_ATTEMPTS = 2;
-const DEFAULT_NATIVE_BOT_CONTAINER_VERSION = "2026-04-05-hexgo-rollout-2";
+const DEFAULT_NATIVE_BOT_CONTAINER_VERSION = "2026-04-05-hexgo-rollout-3";
 
 export class KrakenContainer extends Container {
   defaultPort = KRAKEN_CONTAINER_PORT;
