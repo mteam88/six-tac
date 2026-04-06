@@ -9,7 +9,7 @@ import subprocess
 import sys
 from collections import OrderedDict
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,137 +67,213 @@ def ensure_fast_extensions() -> None:
 ensure_fast_extensions()
 
 from game import HexGame, ToroidalHexGame  # noqa: E402
+from mcts.tree import (  # noqa: E402
+    create_tree,
+    create_tree_dynamic,
+    expand_and_backprop,
+    graft_reused_subtree,
+    maybe_expand_leaf,
+    select_leaf,
+    select_move_pair,
+    select_single_move,
+)
 from mcts_bot import MCTSBot  # noqa: E402
 from model.resnet import BOARD_SIZE  # noqa: E402
 
-
-@torch.inference_mode()
-def _patched_get_move(self, game) -> list[tuple[int, int]]:
-    from mcts.tree import (
-        create_tree,
-        create_tree_dynamic,
-        expand_and_backprop,
-        maybe_expand_leaf,
-        select_leaf,
-        select_move_pair,
-        select_single_move,
-    )
-
-    try:
-        from mcts._mcts_cy import CyGameState, backprop_cy, select_leaf_cy
-        has_cy = True
-    except ImportError:
-        CyGameState = None
-        backprop_cy = None
-        select_leaf_cy = None
-        has_cy = False
-
-    self.last_depth = self.n_sims
-    self._nodes = 0
-    is_torus = isinstance(game, ToroidalHexGame)
-
-    if not game.board:
-        if is_torus:
-            center = BOARD_SIZE // 2
-            return [(center, center)]
-        return [(0, 0)]
-
-    if is_torus:
-        tree = create_tree(game, self.model, self.device, add_noise=False)
-        proxy_game = game
-        off_q = off_r = 0
-    else:
-        self.model.set_padding_mode("zeros")
-        tree, off_q, off_r = create_tree_dynamic(
-            game,
-            self.model,
-            self.device,
-            add_noise=False,
-            min_size=BOARD_SIZE,
-            margin=8,
-        )
-        proxy_game = HexGame(win_length=game.win_length)
-        proxy_game.board = {}
-        for (rq, rr), player in game.board.items():
-            proxy_game.board[(rq + off_q, rr + off_r)] = player
-        proxy_game.current_player = game.current_player
-        proxy_game.moves_left_in_turn = game.moves_left_in_turn
-        proxy_game.move_count = game.move_count
-        proxy_game.winner = game.winner
-        proxy_game.winning_cells = list(getattr(game, "winning_cells", []))
-        proxy_game.game_over = game.game_over
-
-    cy_game = None
-    if has_cy and isinstance(proxy_game, ToroidalHexGame):
-        cy_game = CyGameState.from_toroidal_game(proxy_game)
-
-    self._nodes = 1
-
-    for _ in range(self.n_sims):
-        if cy_game is not None:
-            leaf = select_leaf_cy(tree, cy_game)
-        else:
-            leaf = select_leaf(tree, proxy_game)
-
-        if leaf.is_terminal:
-            if cy_game is not None:
-                backprop_cy(tree, leaf, 0.0)
-            else:
-                expand_and_backprop(tree, leaf, 0.0)
-            continue
-
-        planes = tree.root_planes.clone()
-        if leaf.player_flipped:
-            planes = planes.flip(0)
-        for gq, gr, ch in leaf.deltas:
-            actual_ch = (1 - ch) if leaf.player_flipped else ch
-            planes[actual_ch, gq, gr] = 1.0
-        x = planes.unsqueeze(0).to(self.device)
-        value, pair_logits, _, _ = self.model(x)
-        nn_val = value[0].item()
-        if cy_game is not None:
-            backprop_cy(tree, leaf, nn_val)
-        else:
-            expand_and_backprop(tree, leaf, nn_val)
-
-        if leaf.needs_expansion:
-            logits = pair_logits[0]
-            flat = logits.reshape(-1)
-            top_raw, top_idxs = flat.topk(min(200, flat.shape[0]))
-            top_vals = F.softmax(top_raw, dim=0)
-            marginal_logits = logits.logsumexp(dim=-1)
-            marginal = F.softmax(marginal_logits, dim=0).cpu()
-            maybe_expand_leaf(tree, leaf, marginal, top_idxs.cpu(), top_vals.cpu(), nn_value=nn_val)
-
-        self._nodes += 1
-
-    self.last_root_value = tree.root_value
-
-    if not is_torus:
-        self.model.set_padding_mode("circular")
-
-    if game.moves_left_in_turn == 1:
-        gq, gr = select_single_move(tree)
-        if is_torus:
-            return [(gq, gr)]
-        return [(gq - off_q, gr - off_r)]
-
-    (g1q, g1r), (g2q, g2r) = select_move_pair(tree, temperature=0.1)
-    if is_torus:
-        return [(g1q, g1r), (g2q, g2r)]
-    return [(g1q - off_q, g1r - off_r), (g2q - off_q, g2r - off_r)]
-
-
-MCTSBot.get_move = _patched_get_move
-
+try:  # noqa: E402
+    from mcts._mcts_cy import CyGameState, backprop_cy, select_leaf_cy
+except ImportError:  # noqa: E402
+    CyGameState = None
+    backprop_cy = None
+    select_leaf_cy = None
 
 Turn = tuple[tuple[int, int], tuple[int, int]]
 
 
+@dataclass(frozen=True)
+class SearchGeometry:
+    off_q: int = 0
+    off_r: int = 0
+    width: int = BOARD_SIZE
+    height: int = BOARD_SIZE
+    is_torus: bool = False
+
+
 @dataclass
-class CachedGame:
+class SearchState:
+    tree: object
+    proxy_game: object
+    geometry: SearchGeometry
+    sims_done: int = 0
+
+
+@dataclass
+class ReuseState:
+    node: object
+    geometry: SearchGeometry
+
+
+@dataclass
+class KrakenSession:
     game: HexGame
-    turns: list[Turn]
+    turns: list[Turn] = field(default_factory=list)
+    search: SearchState | None = None
+    reuse: ReuseState | None = None
+
+    def sync_turns(self, turns: list[Turn]) -> None:
+        if len(self.turns) > len(turns) or self.turns != turns[: len(self.turns)]:
+            self.game = _build_game(turns)
+            self.turns = list(turns)
+            self.search = None
+            self.reuse = None
+            return
+
+        if len(turns) == len(self.turns):
+            return
+
+        appended = turns[len(self.turns) :]
+        self.reuse = self._descend_cached_path(appended)
+        for turn in appended:
+            _apply_turn(self.game, turn)
+            self.turns.append(turn)
+        self.search = None
+
+    def _descend_cached_path(self, turns: list[Turn]) -> ReuseState | None:
+        if not turns:
+            return self.reuse
+
+        if self.search is not None:
+            geometry = self.search.geometry
+            node = _root_child_for_turn(self.search, turns[0])
+            start = 1
+        elif self.reuse is not None:
+            geometry = self.reuse.geometry
+            node = self.reuse.node
+            start = 0
+        else:
+            return None
+
+        if node is None:
+            return None
+
+        for turn in turns[start:]:
+            node = _child_for_turn(node, turn, geometry)
+            if node is None:
+                return None
+
+        return ReuseState(node=node, geometry=geometry)
+
+    def ensure_search(self, bot: MCTSBot, n_sims: int) -> SearchState:
+        if self.search is None:
+            self.search = _create_search_state(bot, self.game, self.reuse)
+            self.reuse = None
+        _run_search(bot, self.search, n_sims)
+        return self.search
+
+    def advance_with_move(self, move: Turn) -> None:
+        reuse = None
+        if self.search is not None:
+            child = _root_child_for_turn(self.search, move)
+            if child is not None:
+                reuse = ReuseState(node=child, geometry=self.search.geometry)
+
+        _apply_turn(self.game, move)
+        self.turns.append(move)
+        self.search = None
+        self.reuse = reuse
+
+
+@torch.inference_mode()
+def _run_search(bot: MCTSBot, state: SearchState, target_sims: int) -> None:
+    use_torus_path = state.geometry.is_torus and CyGameState is not None
+    cy_game = None
+    select_fn = select_leaf
+    backprop_fn = expand_and_backprop
+
+    if use_torus_path:
+        cy_game = CyGameState.from_toroidal_game(state.proxy_game)
+        select_fn = select_leaf_cy
+        backprop_fn = backprop_cy
+    else:
+        bot.model.set_padding_mode("zeros")
+
+    try:
+        while state.sims_done < target_sims:
+            leaf = select_fn(state.tree, cy_game or state.proxy_game)
+
+            if leaf.is_terminal:
+                backprop_fn(state.tree, leaf, 0.0)
+                state.sims_done += 1
+                continue
+
+            planes = state.tree.root_planes.clone()
+            if leaf.player_flipped:
+                planes = planes.flip(0)
+            for gq, gr, ch in leaf.deltas:
+                actual_ch = (1 - ch) if leaf.player_flipped else ch
+                planes[actual_ch, gq, gr] = 1.0
+
+            x = planes.unsqueeze(0).to(bot.device)
+            value, pair_logits, _, _ = bot.model(x)
+            nn_val = value[0].item()
+            backprop_fn(state.tree, leaf, nn_val)
+
+            if leaf.needs_expansion:
+                logits = pair_logits[0]
+                flat = logits.reshape(-1)
+                top_raw, top_idxs = flat.topk(min(200, flat.shape[0]))
+                top_vals = F.softmax(top_raw, dim=0)
+                marginal_logits = logits.logsumexp(dim=-1)
+                marginal = F.softmax(marginal_logits, dim=0).cpu()
+                maybe_expand_leaf(
+                    state.tree,
+                    leaf,
+                    marginal,
+                    top_idxs.cpu(),
+                    top_vals.cpu(),
+                    nn_value=nn_val,
+                )
+
+            state.sims_done += 1
+    finally:
+        if not use_torus_path:
+            bot.model.set_padding_mode("circular")
+
+    bot.last_depth = state.sims_done
+    bot.last_root_value = state.tree.root_value
+    bot._nodes = max(1, state.sims_done)
+
+
+@torch.inference_mode()
+def _create_search_state(bot: MCTSBot, game, reuse: ReuseState | None) -> SearchState:
+    if isinstance(game, ToroidalHexGame):
+        tree = create_tree(game, bot.model, bot.device, add_noise=False)
+        geometry = SearchGeometry(is_torus=True)
+        proxy_game = _clone_toroidal_game(game)
+    else:
+        bot.model.set_padding_mode("zeros")
+        tree, off_q, off_r = create_tree_dynamic(
+            game,
+            bot.model,
+            bot.device,
+            add_noise=False,
+            min_size=BOARD_SIZE,
+            margin=8,
+        )
+        geometry = SearchGeometry(
+            off_q=off_q,
+            off_r=off_r,
+            width=tree.board_width,
+            height=tree.n_cells // tree.board_width,
+            is_torus=False,
+        )
+        proxy_game = _build_dynamic_proxy_game(game, off_q, off_r)
+
+    sims_done = 0
+    if reuse is not None and reuse.geometry == geometry:
+        sims_done = graft_reused_subtree(tree, reuse.node, add_noise=False)
+
+    return SearchState(tree=tree, proxy_game=proxy_game, geometry=geometry, sims_done=sims_done)
 
 
 def _new_game() -> HexGame:
@@ -248,25 +324,108 @@ def _build_game(turns: list[Turn]) -> HexGame:
     return game
 
 
-def _clone_game(game: HexGame) -> HexGame:
-    clone = HexGame(win_length=game.win_length)
+def _clone_toroidal_game(game: ToroidalHexGame) -> ToroidalHexGame:
+    clone = ToroidalHexGame(win_length=game.win_length)
     clone.board = dict(game.board)
     clone.current_player = game.current_player
     clone.moves_left_in_turn = game.moves_left_in_turn
     clone.move_count = game.move_count
     clone.winner = game.winner
-    clone.winning_cells = list(game.winning_cells)
     clone.game_over = game.game_over
     return clone
 
 
-def _sync_cached_game(session: CachedGame | None, turns: list[Turn]) -> CachedGame:
-    if session is None or len(session.turns) > len(turns) or session.turns != turns[: len(session.turns)]:
-        return CachedGame(game=_build_game(turns), turns=list(turns))
+def _build_dynamic_proxy_game(game: HexGame, off_q: int, off_r: int) -> HexGame:
+    proxy_game = HexGame(win_length=game.win_length)
+    proxy_game.board = {}
+    for (rq, rr), player in game.board.items():
+        proxy_game.board[(rq + off_q, rr + off_r)] = player
+    proxy_game.current_player = game.current_player
+    proxy_game.moves_left_in_turn = game.moves_left_in_turn
+    proxy_game.move_count = game.move_count
+    proxy_game.winner = game.winner
+    proxy_game.winning_cells = list(getattr(game, "winning_cells", []))
+    proxy_game.game_over = game.game_over
+    return proxy_game
 
-    for turn in turns[len(session.turns) :]:
-        _apply_turn(session.game, turn)
-        session.turns.append(turn)
+
+def _select_move_for_state(game, state: SearchState) -> list[tuple[int, int]]:
+    if game.moves_left_in_turn == 1:
+        gq, gr = select_single_move(state.tree)
+        if state.geometry.is_torus:
+            return [(gq, gr)]
+        return [(gq - state.geometry.off_q, gr - state.geometry.off_r)]
+
+    (g1q, g1r), (g2q, g2r) = select_move_pair(state.tree, temperature=0.1)
+    if state.geometry.is_torus:
+        return [(g1q, g1r), (g2q, g2r)]
+    return [
+        (g1q - state.geometry.off_q, g1r - state.geometry.off_r),
+        (g2q - state.geometry.off_q, g2r - state.geometry.off_r),
+    ]
+
+
+def _root_child_for_turn(state: SearchState, turn: Turn):
+    children = state.tree.root_pos.children or {}
+    for s1_idx, s2_idx in _pair_index_candidates(turn, state.geometry):
+        child = children.get((s1_idx, s2_idx))
+        if child is not None:
+            return child
+    return None
+
+
+def _child_for_turn(node, turn: Turn, geometry: SearchGeometry):
+    children = node.children or {}
+    n_cells = geometry.width * geometry.height
+    for s1_idx, s2_idx in _pair_index_candidates(turn, geometry):
+        child = children.get(s1_idx * n_cells + s2_idx)
+        if child is not None:
+            return child
+    return None
+
+
+def _pair_index_candidates(turn: Turn, geometry: SearchGeometry) -> list[tuple[int, int]]:
+    stones = [turn, (turn[1], turn[0])]
+    indices: list[tuple[int, int]] = []
+    for first, second in stones:
+        s1_idx = _move_to_index(first[0], first[1], geometry)
+        s2_idx = _move_to_index(second[0], second[1], geometry)
+        if s1_idx is None or s2_idx is None or s1_idx == s2_idx:
+            continue
+        pair = (s1_idx, s2_idx)
+        if pair not in indices:
+            indices.append(pair)
+    return indices
+
+
+def _move_to_index(q: int, r: int, geometry: SearchGeometry) -> int | None:
+    if geometry.is_torus:
+        return (q % geometry.width) * geometry.width + (r % geometry.width)
+
+    gq = q + geometry.off_q
+    gr = r + geometry.off_r
+    if gq < 0 or gr < 0 or gq >= geometry.height or gr >= geometry.width:
+        return None
+    return gq * geometry.width + gr
+
+
+def _get_or_create_session(
+    sessions: OrderedDict[str, KrakenSession],
+    cache_key: str,
+    turns: list[Turn],
+) -> KrakenSession:
+    session = sessions.get(cache_key)
+    if session is None:
+        session = KrakenSession(game=_new_game())
+    session.sync_turns(turns)
+    sessions[cache_key] = session
+    sessions.move_to_end(cache_key)
+    return session
+
+
+def _build_uncached_session(turns: list[Turn]) -> KrakenSession:
+    session = KrakenSession(game=_new_game())
+    session.sync_turns(turns)
     return session
 
 
@@ -310,12 +469,13 @@ def main() -> int:
                 "n_sims": n_sims,
                 "torch_threads": thread_count if thread_count > 0 else None,
                 "session_cache_size": max_cached_games,
+                "tree_reuse": True,
             }
         ),
         flush=True,
     )
 
-    sessions: OrderedDict[str, CachedGame] = OrderedDict()
+    sessions: OrderedDict[str, KrakenSession] = OrderedDict()
 
     for line in sys.stdin:
         line = line.strip()
@@ -329,7 +489,7 @@ def main() -> int:
             cache_key = request.get("cache_key") or None
             base_turn_index = int(request.get("base_turn_index", 0))
             advance_session = bool(request.get("advance_session", mode == "best_move"))
-            session: CachedGame | None = None
+
             if cache_key is not None:
                 if base_turn_index > 0:
                     session = sessions.get(cache_key)
@@ -338,23 +498,26 @@ def main() -> int:
                             f"cached Kraken session out of sync for {cache_key!r}: "
                             f"expected {base_turn_index} turns"
                         )
-                    for turn in turns:
-                        _apply_turn(session.game, turn)
-                        session.turns.append(turn)
+                    session.sync_turns(session.turns + turns)
+                    sessions[cache_key] = session
+                    sessions.move_to_end(cache_key)
                 else:
-                    session = _sync_cached_game(sessions.get(cache_key), turns)
-                sessions[cache_key] = session
-                sessions.move_to_end(cache_key)
+                    session = _get_or_create_session(sessions, cache_key, turns)
                 while len(sessions) > max_cached_games:
                     sessions.popitem(last=False)
             elif base_turn_index != 0:
                 raise RuntimeError("base_turn_index requires cache_key")
+            else:
+                session = _build_uncached_session(turns)
+
             with move_timeout(move_timeout_ms):
-                game = _clone_game(session.game) if session is not None else _build_game(turns)
-                stones = bot.get_move(game)
+                state = session.ensure_search(bot, n_sims)
+                stones = _select_move_for_state(session.game, state)
+
             if len(stones) != 2:
                 raise RuntimeError(f"expected two stones from KrakenBot, got: {stones!r}")
             move = ((int(stones[0][0]), int(stones[0][1])), (int(stones[1][0]), int(stones[1][1])))
+
             if mode == "eval":
                 score = float(getattr(bot, "last_root_value", 0.0))
                 win_prob = max(0.0, min(1.0, (score + 1.0) / 2.0))
@@ -363,10 +526,11 @@ def main() -> int:
                     "win_prob": win_prob,
                     "best_move": [[q, r] for q, r in move],
                 }
+                if advance_session:
+                    session.advance_with_move(move)
             else:
-                if session is not None and advance_session:
-                    _apply_turn(session.game, move)
-                    session.turns.append(move)
+                if advance_session:
+                    session.advance_with_move(move)
                 response = {"stones": [[q, r] for q, r in move]}
         except Exception as exc:
             if cache_key is not None:

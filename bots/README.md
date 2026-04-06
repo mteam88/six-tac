@@ -21,7 +21,7 @@ Separate Rust/WASM bot crate for Six Tac.
   - positional evaluation combining windows, line strength, connectivity, and center pressure
 - `kraken`: Ramora0/KrakenBot running directly via Python + PyTorch
   - thin Rust bridge that translates Six Tac turn-list JSON into KrakenBot's native `HexGame`
-  - persistent Python worker per calling thread, so the model stays loaded across requests
+  - persistent Python worker per calling thread, so the model stays loaded across requests and cached sessions can reuse search subtrees between turns when the dynamic board window stays aligned
   - uses the original KrakenBot search/inference code instead of a Rust reimplementation
   - compatibility wrapper for Six Tac's implied opening and max-distance move rule
 
