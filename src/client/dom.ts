@@ -20,6 +20,7 @@ export type AppElements = {
   leaveRoomButton: HTMLButtonElement;
   submitTurnButton: HTMLButtonElement;
   submitLabel: HTMLSpanElement;
+  siteFooter: HTMLElement;
   settingsModal: HTMLDivElement;
   settingsTitle: HTMLHeadingElement;
   settingsClockEnabled: HTMLInputElement;
@@ -69,6 +70,7 @@ export function getAppElements(): AppElements {
     leaveRoomButton: requiredElement("leave-room-button"),
     submitTurnButton: requiredElement("submit-turn-button"),
     submitLabel: requiredElement("submit-label"),
+    siteFooter: requiredElement("site-footer"),
     settingsModal: requiredElement("settings-modal"),
     settingsTitle: requiredElement("settings-title"),
     settingsClockEnabled: requiredElement("settings-clock-enabled"),

@@ -97,6 +97,7 @@ export function createSessionController(options: {
     elements.copyRoomButton.dataset.player = "";
     elements.lobby.classList.remove("hidden");
     elements.bottomBar.classList.add("hidden");
+    elements.siteFooter.classList.remove("hidden");
     elements.joinCodeInput.value = roomCode;
     setLobbyError(message);
     stopClockTicker();
@@ -117,6 +118,7 @@ export function createSessionController(options: {
 
     elements.lobby.classList.add("hidden");
     elements.bottomBar.classList.remove("hidden");
+    elements.siteFooter.classList.add("hidden");
     state.selected = (!session.yourTurn || session.winner)
       ? []
       : state.selected.filter((cube) => !session.stones.some((stone) => sameCube(stone, cube)));
