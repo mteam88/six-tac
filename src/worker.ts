@@ -13,20 +13,22 @@ import {
   handleQueueMatchmaking,
 } from "./api/matchmaking";
 import { json } from "./api/utils";
+import { handleBotTurnBatch } from "./bot-turn-queue";
 import { MatchmakerObject } from "./durable/matchmaker-object";
 import { SessionObject } from "./durable/session-object";
 import type { Env } from "./env";
-import { KrakenContainer } from "./kraken-container";
 
 export class RoomObject extends SessionObject {}
-export { SessionObject, MatchmakerObject, KrakenContainer };
+export { SessionObject, MatchmakerObject };
+export class SessionRuntime extends SessionObject {}
+export class MatchmakerRuntime extends MatchmakerObject {}
 
 function sessionRoute(pathname: string): { sessionId: string; action: string } | null {
   const parts = pathname.split("/").filter(Boolean);
   if (parts.length !== 5 || parts[0] !== "api" || parts[1] !== "v1" || parts[2] !== "sessions") {
     return null;
   }
-  const [,, , sessionId, action] = parts;
+  const [,,, sessionId, action] = parts;
   if (!sessionId || !action) return null;
   return { sessionId, action };
 }
@@ -85,5 +87,9 @@ export default {
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "Unknown error" }, 400);
     }
+  },
+
+  async queue(batch: MessageBatch<import("./bot-turn-queue").BotTurnJob>, env: Env): Promise<void> {
+    await handleBotTurnBatch(batch, env);
   },
 } satisfies ExportedHandler<Env>;

@@ -8,7 +8,7 @@
     "build:bots": "cargo build --manifest-path bots/Cargo.toml --target wasm32-unknown-unknown --release && wasm-bindgen bots/target/wasm32-unknown-unknown/release/six_tac_bots.wasm --out-dir src/bot-wasm --out-name bots --target bundler && bash -lc 'set -euo pipefail; snippet_dir=$(find src/bot-wasm/snippets -maxdepth 1 -type d -name \"six-tac-bots-*\" | head -n 1); test -n \"${snippet_dir:-}\"; mkdir -p \"$snippet_dir/generated\"; cp bots/generated/sealbot.js \"$snippet_dir/generated/sealbot.js\"'",
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "bot-service": "cargo run --release --manifest-path bots/Cargo.toml --bin bot_service",
+    "deploy:modal": "uvx modal deploy modal/kraken_service.py",
     "export:kraken-onnx": "uv run --with torch --with onnx --with onnxscript python bots/scripts/export_kraken_onnx.py",
     "start": "npm run dev"
   },
@@ -16,8 +16,5 @@
     "esbuild": "^0.27.3",
     "typescript": "^6.0.2",
     "wrangler": "^4.80.0"
-  },
-  "dependencies": {
-    "@cloudflare/containers": "^0.2.2"
   }
 }

@@ -6,7 +6,7 @@ Separate Rust/WASM bot crate for Six Tac.
 - native builds compile a small C ABI bridge directly against the upstream C++ engine
 - wasm builds require Emscripten (`em++`) and emit `bots/generated/sealbot.js` during `cargo build`
 
-`kraken` is vendored from `bots/vendor/KrakenBot` and now runs through the original Python/PyTorch implementation behind a thin Rust translator. Because the neural MCTS stack is far heavier than the other bots, it is exposed through the native harness and the optional Rust HTTP bot service / Cloudflare Container runtime rather than the embedded wasm bundle.
+`kraken` is vendored from `bots/vendor/KrakenBot` and now runs through the original Python/PyTorch implementation behind a thin Rust translator. Because the neural MCTS stack is far heavier than the other bots, it is exposed through the native harness and the dedicated Modal inference service rather than the embedded wasm bundle.
 
 ## Bots
 
@@ -51,41 +51,13 @@ List available bots:
 cargo run --release --manifest-path bots/Cargo.toml --bin harness -- list
 ```
 
-Run the native HTTP bot service used by the Worker-backed frontend for heavy bots like Kraken:
-
-```bash
-export KRAKEN_MODEL_PATH=/Users/mte/Downloads/kraken_v1.pt
-cargo run --release --manifest-path bots/Cargo.toml --bin bot_service
-```
-
-Notes:
-- Kraken now launches the vendored Python worker through `uv run --with torch --with numpy ...`
-- override the launcher with `KRAKEN_PYTHON_EXECUTABLE=/path/to/python` if you already have a Python env with PyTorch installed
-- set `KRAKEN_DEVICE=mps`, `cuda`, or `cpu` to force a PyTorch device; otherwise KrakenBot auto-detects
-- set `KRAKEN_N_SIMS` to override the default 200 MCTS simulations
-- on MPS, the worker defaults to `KRAKEN_TORCH_THREADS=1` to reduce CPU-side overhead; override if you want to sweep thread counts
-- the worker will try to build KrakenBot's optional Cython MCTS extensions on first launch (`KRAKEN_BUILD_EXTENSIONS=0` disables that)
-
-## Cloudflare Container deployment
-
-The Worker can now host Kraken through a Cloudflare Container-backed Durable Object (`KrakenContainer`).
-
-Files involved:
-- `bots/Dockerfile.kraken`
-- `bots/scripts/start_kraken_service.sh`
-- `src/kraken-container.ts`
-- `wrangler.toml`
+Kraken is now hosted by the Modal app in `modal/kraken_service.py`.
 
 Deployment notes:
-- bundle a checkpoint at `bots/models/kraken_v1.pt`, or set `KRAKEN_MODEL_URL` so the container downloads the model on first boot
-- `KRAKEN_MODEL_VERSION` controls the bot registry version exposed by `/api/v1/bots`
-- `KRAKEN_CONTAINER_POOL_SIZE` controls how many deterministic Kraken shards the Worker routes across
-- `npm run deploy` will deploy the Worker and the configured container image together
-- Wrangler needs a working local Docker CLI/daemon when building and uploading the container image
-
-## TODO
-
-- Add a truly stateful hosted Kraken runtime so each game can reuse search/tree state instead of rebuilding from full `game_json` every turn.
+- the Modal image bundles `bots/models/kraken_v1.pt`
+- the service token comes from the `six-tac-kraken-auth` Modal secret
+- the Cloudflare Worker talks to Modal through `BOT_SERVICE_URL` + `MODAL_BOT_TOKEN`
+- all bot turns are queued through Cloudflare Queues before inference
 
 Benchmark Kraken latency directly:
 

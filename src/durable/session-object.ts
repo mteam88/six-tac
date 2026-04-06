@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { json, readJson, clientAddress } from "../api/utils";
-import { chooseBackendBotMove } from "../backend-bots";
+import { clientAddress, json, readJson } from "../api/utils";
 import { completeMove, expireSessionOnClock, getDeadlineAt, startClock } from "../domain/clock";
 import {
   applySnapshotResult,
@@ -11,8 +10,9 @@ import {
   participantForSeat,
   playerForSeat,
 } from "../domain/session-state";
-import type { Cube, EngineSnapshot, HumanSeat, SessionData, Seat } from "../domain/types";
+import type { BotName, Cube, EngineSnapshot, HumanSeat, SessionData, Seat } from "../domain/types";
 import type { Env } from "../env";
+import type { BotTurnJob } from "../bot-turn-queue";
 import { play_json, snapshot_json } from "../engine";
 import { FixedWindowRateLimiter, rateLimitKey } from "./rate-limit";
 
@@ -28,18 +28,25 @@ const SESSION_JOIN_LIMIT = {
   retryAfterSeconds: 30,
 };
 
-const BOT_TURN_RETRY_BASE_MS = 5_000;
-const BOT_TURN_RETRY_MAX_MS = 60_000;
-
-type BotTurnState = {
-  retryCount: number;
-  nextRetryAt: number | null;
-  lastError: string | null;
+type PendingBotJob = {
+  version: number;
+  botName: BotName;
+  enqueuedAt: number;
 };
 
 type StoredSessionData = SessionData & {
   snapshot: EngineSnapshot;
-  botTurn: BotTurnState;
+  pendingBotJob: PendingBotJob | null;
+  lastBotError: string | null;
+};
+
+type LegacyRoomData = {
+  code: string;
+  turnsJson: string;
+  seats: {
+    one: string | null;
+    two: string | null;
+  };
 };
 
 function callSnapshot(gameJson: string): EngineSnapshot {
@@ -61,43 +68,25 @@ function tooManyRequests(retryAfterSeconds: number): Response {
   );
 }
 
-function createBotTurnState(): BotTurnState {
-  return {
-    retryCount: 0,
-    nextRetryAt: null,
-    lastError: null,
-  };
-}
-
-function getBotTurnRetryDelayMs(retryCount: number): number {
-  return Math.min(BOT_TURN_RETRY_BASE_MS * 2 ** Math.max(0, retryCount - 1), BOT_TURN_RETRY_MAX_MS);
-}
-
-type LegacyRoomData = {
-  code: string;
-  turnsJson: string;
-  seats: {
-    one: string | null;
-    two: string | null;
-  };
-};
-
 export class SessionObject extends DurableObject<Env> {
   private readonly rateLimiter = new FixedWindowRateLimiter();
-  private botTurnTask: Promise<void> | null = null;
 
   private async loadSession(): Promise<StoredSessionData | null> {
-    const stored = await this.ctx.storage.get<StoredSessionData | SessionData>("session");
+    const stored = await this.ctx.storage.get<Record<string, unknown>>("session");
     if (stored) {
-      if ("snapshot" in stored && stored.snapshot && "botTurn" in stored && stored.botTurn) {
-        return stored as StoredSessionData;
-      }
-
-      const migrated = {
-        ...stored,
-        snapshot: "snapshot" in stored && stored.snapshot ? stored.snapshot : callSnapshot(stored.turnsJson),
-        botTurn: "botTurn" in stored && stored.botTurn ? stored.botTurn : createBotTurnState(),
-      } satisfies StoredSessionData;
+      const turnsJson = typeof stored.turnsJson === "string" ? stored.turnsJson : '{"turns":[]}';
+      const snapshot = (stored.snapshot as EngineSnapshot | undefined) ?? callSnapshot(turnsJson);
+      const version = typeof stored.version === "number" ? stored.version : snapshot.turn_count;
+      const migrated: StoredSessionData = {
+        ...(stored as SessionData),
+        turnsJson,
+        version,
+        snapshot,
+        pendingBotJob: isPendingBotJob(stored.pendingBotJob) ? stored.pendingBotJob : null,
+        lastBotError: typeof stored.lastBotError === "string"
+          ? stored.lastBotError
+          : readLegacyBotTurnError(stored.botTurn),
+      };
       await this.ctx.storage.put("session", migrated);
       return migrated;
     }
@@ -118,6 +107,7 @@ export class SessionObject extends DurableObject<Env> {
         : legacyRoom.seats.one && legacyRoom.seats.two
           ? "active"
           : "waiting",
+      version: snapshot.turn_count,
       createdAt: now,
       updatedAt: now,
       turnsJson: legacyRoom.turnsJson,
@@ -132,7 +122,8 @@ export class SessionObject extends DurableObject<Env> {
       clock: null,
       result: snapshot.winner ? { winner: snapshot.winner, reason: "win" } : null,
       snapshot,
-      botTurn: createBotTurnState(),
+      pendingBotJob: null,
+      lastBotError: null,
     };
 
     await this.ctx.storage.put("session", migrated);
@@ -150,16 +141,13 @@ export class SessionObject extends DurableObject<Env> {
       return;
     }
 
-    const nextAlarmAt = [getDeadlineAt(session.clock), session.botTurn.nextRetryAt]
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-      .reduce<number | null>((earliest, value) => earliest === null ? value : Math.min(earliest, value), null);
-
-    if (nextAlarmAt === null) {
+    const deadlineAt = getDeadlineAt(session.clock);
+    if (deadlineAt === null) {
       await this.ctx.storage.deleteAlarm();
       return;
     }
 
-    await this.ctx.storage.setAlarm(nextAlarmAt);
+    await this.ctx.storage.setAlarm(deadlineAt);
   }
 
   private ensureActiveClock(session: StoredSessionData, snapshot: EngineSnapshot, now: number): void {
@@ -176,14 +164,10 @@ export class SessionObject extends DurableObject<Env> {
   private async maybeExpireSession(session: StoredSessionData): Promise<void> {
     const now = Date.now();
     if (expireSessionOnClock(session, now)) {
-      session.botTurn = createBotTurnState();
+      session.pendingBotJob = null;
       session.updatedAt = now;
       await this.saveSession(session);
     }
-  }
-
-  private resetBotTurnState(session: StoredSessionData): void {
-    session.botTurn = createBotTurnState();
   }
 
   private getCurrentBotParticipant(session: StoredSessionData) {
@@ -196,38 +180,48 @@ export class SessionObject extends DurableObject<Env> {
     return participant?.kind === "bot" && participant.botConfig ? participant : null;
   }
 
-  private queueBotTurnProcessing(): void {
-    if (this.botTurnTask) {
-      return;
-    }
-
-    const task = this.runBotTurns()
-      .catch((error) => {
-        console.error("SessionObject bot turn processing error", error);
-      })
-      .finally(() => {
-        this.botTurnTask = null;
-      });
-
-    this.botTurnTask = task;
-    this.ctx.waitUntil(task);
+  private buildBotTurnJob(session: StoredSessionData, botName: BotName): BotTurnJob {
+    return {
+      sessionId: session.id,
+      version: session.version,
+      botName,
+      turnsJson: session.turnsJson,
+    };
   }
 
-  private async maybeQueueBotTurnProcessing(session: StoredSessionData, now = Date.now()): Promise<void> {
-    if (!this.getCurrentBotParticipant(session)) {
-      if (session.botTurn.retryCount || session.botTurn.nextRetryAt || session.botTurn.lastError) {
-        this.resetBotTurnState(session);
-        await this.saveSession(session);
-      }
+  private async enqueueCurrentBotTurn(session: StoredSessionData): Promise<void> {
+    const participant = this.getCurrentBotParticipant(session);
+    if (!participant?.botConfig) {
+      session.pendingBotJob = null;
       return;
     }
 
-    if (session.botTurn.nextRetryAt && session.botTurn.nextRetryAt > now) {
-      await this.syncAlarm(session);
+    if (session.pendingBotJob?.version === session.version) {
       return;
     }
 
-    this.queueBotTurnProcessing();
+    session.pendingBotJob = {
+      version: session.version,
+      botName: participant.botConfig.name,
+      enqueuedAt: Date.now(),
+    };
+    session.lastBotError = null;
+    session.updatedAt = Date.now();
+    await this.saveSession(session);
+
+    try {
+      await this.env.BOT_TURNS_QUEUE.send(this.buildBotTurnJob(session, participant.botConfig.name));
+    } catch (error) {
+      session.lastBotError = error instanceof Error ? error.message : String(error);
+      session.updatedAt = Date.now();
+      await this.saveSession(session);
+      console.error("failed to enqueue bot turn", {
+        sessionId: session.id,
+        version: session.version,
+        botName: participant.botConfig.name,
+        error: session.lastBotError,
+      });
+    }
   }
 
   private async snapshotForView(session: StoredSessionData, token: string | null): Promise<{ seat: Seat; view: ReturnType<typeof buildSessionView> }> {
@@ -246,113 +240,6 @@ export class SessionObject extends DurableObject<Env> {
     return tooManyRequests(limit.retryAfterSeconds);
   }
 
-  private async runBotTurns(): Promise<void> {
-    while (true) {
-      const session = await this.loadSession();
-      if (!session) {
-        return;
-      }
-
-      await this.maybeExpireSession(session);
-      if (session.status !== "active" || session.result) {
-        if (session.botTurn.retryCount || session.botTurn.nextRetryAt || session.botTurn.lastError) {
-          this.resetBotTurnState(session);
-          session.updatedAt = Date.now();
-          await this.saveSession(session);
-        }
-        return;
-      }
-
-      const snapshot = session.snapshot;
-      const now = Date.now();
-      if (applySnapshotResult(session, snapshot, now)) {
-        this.resetBotTurnState(session);
-        session.updatedAt = now;
-        await this.saveSession(session);
-        return;
-      }
-
-      const participant = this.getCurrentBotParticipant(session);
-      if (!participant?.botConfig) {
-        this.ensureActiveClock(session, snapshot, now);
-        if (session.botTurn.retryCount || session.botTurn.nextRetryAt || session.botTurn.lastError) {
-          this.resetBotTurnState(session);
-          session.updatedAt = now;
-          await this.saveSession(session);
-        }
-        return;
-      }
-
-      if (session.botTurn.nextRetryAt && session.botTurn.nextRetryAt > now) {
-        await this.syncAlarm(session);
-        return;
-      }
-
-      this.ensureActiveClock(session, snapshot, now);
-      const turnsJsonBeforeMove = session.turnsJson;
-
-      try {
-        const stones = await chooseBackendBotMove(
-          this.env,
-          participant.botConfig.name,
-          turnsJsonBeforeMove,
-          session.id,
-        );
-
-        const latest = await this.loadSession();
-        if (!latest) {
-          return;
-        }
-        if (latest.status !== "active" || latest.result) {
-          return;
-        }
-        if (latest.turnsJson !== turnsJsonBeforeMove) {
-          continue;
-        }
-
-        const moveAppliedAt = Date.now();
-        const nextSnapshot = callPlay(latest.turnsJson, stones);
-        latest.turnsJson = nextSnapshot.turns_json;
-        latest.snapshot = nextSnapshot;
-        latest.updatedAt = moveAppliedAt;
-        this.resetBotTurnState(latest);
-        if (!applySnapshotResult(latest, nextSnapshot, moveAppliedAt)) {
-          const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
-          completeMove(latest.clock, nextSeat, moveAppliedAt);
-        }
-        await this.saveSession(latest);
-      } catch (error) {
-        const latest = await this.loadSession();
-        if (!latest) {
-          return;
-        }
-        if (latest.status !== "active" || latest.result) {
-          return;
-        }
-        if (latest.turnsJson !== turnsJsonBeforeMove) {
-          continue;
-        }
-
-        const retryCount = latest.botTurn.retryCount + 1;
-        const retryDelayMs = getBotTurnRetryDelayMs(retryCount);
-        latest.botTurn = {
-          retryCount,
-          nextRetryAt: Date.now() + retryDelayMs,
-          lastError: error instanceof Error ? error.message : String(error),
-        };
-        latest.updatedAt = Date.now();
-        await this.saveSession(latest);
-        console.error("SessionObject bot turn attempt failed", {
-          sessionId: latest.id,
-          retryCount,
-          retryDelayMs,
-          error: latest.botTurn.lastError,
-        });
-        return;
-      }
-    }
-  }
-
   async fetch(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url);
@@ -367,12 +254,14 @@ export class SessionObject extends DurableObject<Env> {
         const snapshot = callSnapshot(session.turnsJson);
         const storedSession: StoredSessionData = {
           ...session,
+          version: typeof session.version === "number" ? session.version : snapshot.turn_count,
           snapshot,
-          botTurn: createBotTurnState(),
+          pendingBotJob: null,
+          lastBotError: null,
         };
         this.ensureActiveClock(storedSession, snapshot, Date.now());
         await this.saveSession(storedSession);
-        await this.maybeQueueBotTurnProcessing(storedSession);
+        await this.enqueueCurrentBotTurn(storedSession);
         return json({ ok: true }, 201);
       }
 
@@ -381,6 +270,57 @@ export class SessionObject extends DurableObject<Env> {
       }
 
       const session = existingSession;
+
+      if (request.method === "POST" && url.pathname === "/internal/bot-job/check") {
+        await this.maybeExpireSession(session);
+        const body = await readJson<{ version?: number }>(request);
+        const current =
+          session.status === "active"
+          && !session.result
+          && session.pendingBotJob?.version === body.version
+          && Boolean(this.getCurrentBotParticipant(session));
+        return json({ current });
+      }
+
+      if (request.method === "POST" && url.pathname === "/internal/bot-job/apply") {
+        await this.maybeExpireSession(session);
+        const body = await readJson<{ version?: number; stones?: Cube[] }>(request);
+        if (
+          session.status !== "active"
+          || session.result
+          || session.pendingBotJob?.version !== body.version
+          || !Array.isArray(body.stones)
+          || body.stones.length !== 2
+        ) {
+          return json({ applied: false });
+        }
+
+        const now = Date.now();
+        const nextSnapshot = callPlay(session.turnsJson, body.stones);
+        session.turnsJson = nextSnapshot.turns_json;
+        session.snapshot = nextSnapshot;
+        session.version += 1;
+        session.pendingBotJob = null;
+        session.lastBotError = null;
+        session.updatedAt = now;
+        if (!applySnapshotResult(session, nextSnapshot, now)) {
+          const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
+          completeMove(session.clock, nextSeat, now);
+        }
+        await this.saveSession(session);
+        await this.enqueueCurrentBotTurn(session);
+        return json({ applied: true });
+      }
+
+      if (request.method === "POST" && url.pathname === "/internal/bot-job/fail") {
+        const body = await readJson<{ version?: number; error?: string }>(request);
+        if (session.pendingBotJob?.version === body.version) {
+          session.lastBotError = String(body.error || "Bot turn failed");
+          session.updatedAt = Date.now();
+          await this.saveSession(session);
+        }
+        return json({ ok: true });
+      }
 
       if (request.method === "POST" && url.pathname === "/join") {
         const body = await readJson<{ token?: string | null; playerId?: string | null }>(request);
@@ -395,7 +335,6 @@ export class SessionObject extends DurableObject<Env> {
         const incomingToken = body.token ?? null;
         const existingSeat = getSeatForToken(session, incomingToken);
         if (existingSeat !== "spectator" && incomingToken) {
-          await this.maybeQueueBotTurnProcessing(session);
           const { view } = await this.snapshotForView(session, incomingToken);
           return json({ token: incomingToken, session: view });
         }
@@ -426,12 +365,10 @@ export class SessionObject extends DurableObject<Env> {
           }
           session.updatedAt = Date.now();
           await this.saveSession(session);
-          await this.maybeQueueBotTurnProcessing(session);
           const { view } = await this.snapshotForView(session, token);
           return json({ token, session: view });
         }
 
-        await this.maybeQueueBotTurnProcessing(session);
         const { view } = await this.snapshotForView(session, token);
         return json({ token, session: view });
       }
@@ -447,16 +384,15 @@ export class SessionObject extends DurableObject<Env> {
         }
 
         await this.maybeExpireSession(session);
-        await this.maybeQueueBotTurnProcessing(session);
         const seat = getSeatForToken(session, token);
         const knownVersion = Number(url.searchParams.get("version") || "");
         const knownSeat = url.searchParams.get("seat");
-        if (Number.isFinite(knownVersion) && knownVersion === session.updatedAt && knownSeat === seat) {
+        if (Number.isFinite(knownVersion) && knownVersion === session.version && knownSeat === seat) {
           return json({
             unchanged: true,
             seat,
             serverNow: Date.now(),
-            version: session.updatedAt,
+            version: session.version,
           });
         }
 
@@ -476,7 +412,7 @@ export class SessionObject extends DurableObject<Env> {
         const snapshot = session.snapshot;
         this.ensureActiveClock(session, snapshot, now);
         if (expireSessionOnClock(session, now)) {
-          this.resetBotTurnState(session);
+          session.pendingBotJob = null;
           session.updatedAt = now;
           await this.saveSession(session);
           return json({ error: "Time has already expired for this turn" }, 400);
@@ -497,14 +433,16 @@ export class SessionObject extends DurableObject<Env> {
         const nextSnapshot = callPlay(session.turnsJson, body.stones);
         session.turnsJson = nextSnapshot.turns_json;
         session.snapshot = nextSnapshot;
+        session.version += 1;
+        session.pendingBotJob = null;
+        session.lastBotError = null;
         session.updatedAt = now;
-        this.resetBotTurnState(session);
         if (!applySnapshotResult(session, nextSnapshot, now)) {
           const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
           completeMove(session.clock, nextSeat, now);
         }
         await this.saveSession(session);
-        await this.maybeQueueBotTurnProcessing(session);
+        await this.enqueueCurrentBotTurn(session);
         const { view } = await this.snapshotForView(session, token);
         return json(view);
       }
@@ -523,15 +461,32 @@ export class SessionObject extends DurableObject<Env> {
     }
 
     const now = Date.now();
+    this.ensureActiveClock(session, session.snapshot, now);
     if (expireSessionOnClock(session, now)) {
-      this.resetBotTurnState(session);
+      session.pendingBotJob = null;
       session.updatedAt = now;
       await this.saveSession(session);
       return;
     }
 
-    this.ensureActiveClock(session, session.snapshot, now);
-    await this.saveSession(session);
-    await this.maybeQueueBotTurnProcessing(session, now);
+    await this.syncAlarm(session);
   }
+}
+
+function isPendingBotJob(value: unknown): value is PendingBotJob {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.version === "number"
+    && typeof candidate.botName === "string"
+    && typeof candidate.enqueuedAt === "number";
+}
+
+function readLegacyBotTurnError(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.lastError === "string" ? candidate.lastError : null;
 }

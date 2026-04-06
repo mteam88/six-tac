@@ -2,76 +2,30 @@ import { chooseBotMove as chooseEmbeddedBotMove, listBotNames as listEmbeddedBot
 import { BOT_ORDER, buildBotCatalogEntry } from "./domain/bot";
 import type { BotCatalogEntry, BotName, Cube } from "./domain/types";
 import type { Env } from "./env";
-import { fetchKrakenContainer, hasKrakenContainer } from "./kraken-container";
 
-const REMOTE_BOT_LIST_TTL_MS = 60_000;
-const REMOTE_BOT_MOVE_TIMEOUT_MS = 30_000;
-const REMOTE_BOT_MOVE_MAX_ATTEMPTS = 2;
-
-type RemoteBotCache = {
-  at: number;
-  bots: BotCatalogEntry[];
-};
-
-type RemoteBotListPayload = {
-  bots?: Array<BotName | { name?: BotName; version?: string; available?: boolean }>;
-  error?: string;
-};
-
-let remoteBotCache: RemoteBotCache | null = null;
+const DEFAULT_REMOTE_BOT_MOVE_TIMEOUT_MS = 30_000;
 
 function normalizeEnvUrl(raw: string | undefined): string | null {
   if (!raw) return null;
-  let value = raw.trim();
-  if (!value) return null;
+  const value = raw.trim().replace(/^['"]|['"]$/g, "").replace(/\/$/, "");
+  return value || null;
+}
 
-  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
-    value = value.slice(1, -1).trim();
-  }
-  if ((value.startsWith('\\"') && value.endsWith('\\"')) || (value.startsWith("\\'") && value.endsWith("\\'"))) {
-    value = value.slice(2, -2).trim();
-  }
-
-  return value ? value.replace(/\/$/, "") : null;
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value || "");
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
 function remoteServiceBaseUrl(env: Env): string | null {
   return normalizeEnvUrl(env.BOT_SERVICE_URL);
 }
 
-function embeddedBotSet(): Set<BotName> {
-  return new Set(listEmbeddedBotNames());
+function remoteMoveTimeoutMs(env: Env): number {
+  return parsePositiveInt(env.KRAKEN_MOVE_TIMEOUT_MS, DEFAULT_REMOTE_BOT_MOVE_TIMEOUT_MS);
 }
 
-function normalizeRemoteBots(payload: RemoteBotListPayload, env: Env): BotCatalogEntry[] {
-  const krakenVersion = env.KRAKEN_MODEL_VERSION?.trim() || "kraken_v1";
-  const bots = payload.bots ?? [];
-  const entries: BotCatalogEntry[] = [];
-
-  for (const bot of bots) {
-    if (typeof bot === "string") {
-      if (!BOT_ORDER.includes(bot)) continue;
-      entries.push(buildBotCatalogEntry(bot, {
-        execution: "remote",
-        version: bot === "kraken" ? krakenVersion : "builtin",
-      }));
-      continue;
-    }
-
-    if (!bot?.name || !BOT_ORDER.includes(bot.name)) {
-      continue;
-    }
-    if (bot.available === false) {
-      continue;
-    }
-
-    entries.push(buildBotCatalogEntry(bot.name, {
-      execution: "remote",
-      version: bot.version?.trim() || (bot.name === "kraken" ? krakenVersion : "builtin"),
-    }));
-  }
-
-  return entries;
+function embeddedBotSet(): Set<BotName> {
+  return new Set(listEmbeddedBotNames());
 }
 
 function uniqueBots(botEntries: BotCatalogEntry[]): BotCatalogEntry[] {
@@ -88,25 +42,6 @@ function uniqueBots(botEntries: BotCatalogEntry[]): BotCatalogEntry[] {
   return unique;
 }
 
-async function listRemoteBots(env: Env): Promise<BotCatalogEntry[]> {
-  const baseUrl = remoteServiceBaseUrl(env);
-  if (!baseUrl) return [];
-
-  if (remoteBotCache && Date.now() - remoteBotCache.at < REMOTE_BOT_LIST_TTL_MS) {
-    return remoteBotCache.bots;
-  }
-
-  const response = await fetch(`${baseUrl}/v1/bots`);
-  const data = (await response.json()) as RemoteBotListPayload;
-  if (!response.ok) {
-    throw new Error(data.error || "Could not load remote bot list");
-  }
-
-  const bots = normalizeRemoteBots(data, env);
-  remoteBotCache = { at: Date.now(), bots };
-  return bots;
-}
-
 function listEmbeddedBots(): BotCatalogEntry[] {
   const embedded = embeddedBotSet();
   return BOT_ORDER
@@ -114,8 +49,8 @@ function listEmbeddedBots(): BotCatalogEntry[] {
     .map((botName) => buildBotCatalogEntry(botName, { execution: "worker", version: "builtin" }));
 }
 
-function listKrakenContainerBots(env: Env): BotCatalogEntry[] {
-  if (!hasKrakenContainer(env)) {
+function listRemoteBots(env: Env): BotCatalogEntry[] {
+  if (!remoteServiceBaseUrl(env)) {
     return [];
   }
 
@@ -128,13 +63,7 @@ function listKrakenContainerBots(env: Env): BotCatalogEntry[] {
 }
 
 export async function listAvailableBots(env: Env): Promise<BotCatalogEntry[]> {
-  const embedded = listEmbeddedBots();
-  const remote = remoteServiceBaseUrl(env)
-    ? await listRemoteBots(env).catch(() => [])
-    : hasKrakenContainer(env)
-      ? listKrakenContainerBots(env)
-      : [];
-  return uniqueBots([...embedded, ...remote]);
+  return uniqueBots([...listEmbeddedBots(), ...listRemoteBots(env)]);
 }
 
 export async function listAvailableBotNames(env: Env): Promise<BotName[]> {
@@ -149,88 +78,70 @@ export async function hasAvailableBot(env: Env, botName: BotName): Promise<boole
   return Boolean(await getAvailableBot(env, botName));
 }
 
-function isRetryableRemoteStatus(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500;
-}
-
 function fetchWithTimeout(resource: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(`Remote bot move timed out after ${timeoutMs}ms`), timeoutMs);
   return fetch(resource, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
-async function fetchRemoteBotServiceBestMove(baseUrl: string, body: string): Promise<Response> {
-  let lastError: unknown = null;
-
-  for (let attempt = 0; attempt < REMOTE_BOT_MOVE_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      const response = await fetchWithTimeout(`${baseUrl}/v1/best-move`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body,
-      }, REMOTE_BOT_MOVE_TIMEOUT_MS);
-      if (!isRetryableRemoteStatus(response.status) || attempt === REMOTE_BOT_MOVE_MAX_ATTEMPTS - 1) {
-        return response;
-      }
-      lastError = new Error(`Remote bot service returned ${response.status}`);
-      console.warn(`[bots] retrying remote move after ${response.status}`);
-    } catch (error) {
-      lastError = error;
-      if (attempt === REMOTE_BOT_MOVE_MAX_ATTEMPTS - 1) {
-        break;
-      }
-      console.warn("[bots] retrying remote move after transport failure", error);
-    }
+function axialToCube(value: unknown): Cube | null {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return null;
   }
 
-  throw lastError instanceof Error ? lastError : new Error("Remote bot service request failed");
+  const [x, z] = value;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) {
+    return null;
+  }
+
+  return {
+    x,
+    y: -x - z,
+    z,
+  };
 }
 
 async function chooseRemoteBotMove(
   env: Env,
   botName: BotName,
   gameJson: string,
-  cacheKey?: string,
 ): Promise<[Cube, Cube]> {
-  const body = JSON.stringify({
-    bot_name: botName,
-    game_json: gameJson,
-    cache_key: cacheKey ?? null,
-  });
-
   const baseUrl = remoteServiceBaseUrl(env);
-  const response = baseUrl
-    ? await fetchRemoteBotServiceBestMove(baseUrl, body)
-    : botName === "kraken" && hasKrakenContainer(env)
-      ? await fetchKrakenContainer(
-          env,
-          new Request("https://kraken.internal/v1/best-move", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body,
-          }),
-          cacheKey,
-        )
-      : (() => {
-          throw new Error(`${botName} requires a configured remote runtime`);
-        })();
+  if (!baseUrl) {
+    throw new Error("BOT_SERVICE_URL is not configured");
+  }
 
-  const data = (await response.json()) as { stones?: [Cube, Cube]; error?: string };
-  if (!response.ok || !Array.isArray(data.stones) || data.stones.length !== 2) {
+  const token = env.MODAL_BOT_TOKEN?.trim();
+  if (!token) {
+    throw new Error("MODAL_BOT_TOKEN is not configured");
+  }
+
+  const response = await fetchWithTimeout(`${baseUrl}/v1/best-move`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      bot_name: botName,
+      game_json: gameJson,
+    }),
+  }, remoteMoveTimeoutMs(env));
+
+  const data = (await response.json()) as { stones?: unknown[]; error?: string };
+  const first = axialToCube(data.stones?.[0]);
+  const second = axialToCube(data.stones?.[1]);
+  if (!response.ok || !first || !second) {
     throw new Error(data.error || `Could not choose a move for ${botName}`);
   }
-  return data.stones;
+
+  return [first, second];
 }
 
 export async function chooseBackendBotMove(
   env: Env,
   botName: BotName,
   gameJson: string,
-  cacheKey?: string,
 ): Promise<[Cube, Cube]> {
   const bot = await getAvailableBot(env, botName);
   if (!bot?.available) {
@@ -238,7 +149,7 @@ export async function chooseBackendBotMove(
   }
 
   if (bot.execution === "remote") {
-    return chooseRemoteBotMove(env, botName, gameJson, cacheKey);
+    return chooseRemoteBotMove(env, botName, gameJson);
   }
 
   if (!embeddedBotSet().has(botName)) {

@@ -1,4 +1,4 @@
-const CACHE_NAME = "six-tac-v7";
+const CACHE_NAME = "six-tac-v8";
 const APP_SHELL = [
   "/",
   "/index.html",

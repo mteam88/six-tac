@@ -1,6 +1,6 @@
 import type { BotName, ClockSettings, ClockState, HumanSeat, SessionRef } from "../domain/types.js";
 
-export const SESSION_KEY = "six-tac-session";
+export const SESSION_KEY = "six-tac-session-v2";
 export const LOCAL_GAME_KEY = "six-tac-local-game";
 export const PLAYER_ID_KEY = "six-tac-player-id";
 export const SETTINGS_KEY = "six-tac-settings";

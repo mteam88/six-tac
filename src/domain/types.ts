@@ -78,6 +78,7 @@ export type SessionData = {
   code: string | null;
   type: SessionMode;
   status: SessionStatus;
+  version: number;
   createdAt: number;
   updatedAt: number;
   turnsJson: string;

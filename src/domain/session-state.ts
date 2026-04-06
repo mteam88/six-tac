@@ -138,7 +138,7 @@ export function buildSessionView(
     gameJson: snapshot.turns_json,
     clock: session.clock ? cloneClock(session.clock) : null,
     serverNow: now,
-    version: session.updatedAt,
+    version: session.version,
   };
 }
 
@@ -218,6 +218,7 @@ export function createSession(
     code: params.code,
     type: params.type,
     status: params.active ? "active" : "waiting",
+    version: 0,
     createdAt: now,
     updatedAt: now,
     turnsJson: '{"turns":[]}',

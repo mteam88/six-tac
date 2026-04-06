@@ -57,66 +57,39 @@ Kraken now runs through the original vendored **Ramora0 KrakenBot Python/PyTorch
 
 ### Local native dev service
 
-Start the native service with the creator checkpoint:
+### Modal deployment
+
+Kraken now runs behind a dedicated Modal service and all bot turns flow through Cloudflare Queues.
+
+1. Create a Modal secret for the service token:
 
 ```bash
-export KRAKEN_MODEL_PATH=/Users/mte/Downloads/kraken_v1.pt
-npm run bot-service
+TOKEN=$(openssl rand -hex 32)
+uvx modal secret create six-tac-kraken-auth MODAL_BOT_TOKEN="$TOKEN"
 ```
 
-Useful overrides:
+2. Deploy the Modal service:
 
 ```bash
-export KRAKEN_DEVICE=mps   # or cuda / cpu
-export KRAKEN_N_SIMS=200
-export KRAKEN_TORCH_THREADS=1
-# optional if you already have a Python env with torch installed
-export KRAKEN_PYTHON_EXECUTABLE=/path/to/python
+npm run deploy:modal
 ```
 
-Then point the Worker at it with a Wrangler binding:
+3. Set the Worker secrets:
 
 ```bash
-printf 'BOT_SERVICE_URL="http://127.0.0.1:8788"\n' > .dev.vars
-npm run dev
+wrangler secret put BOT_SERVICE_URL
+wrangler secret put MODAL_BOT_TOKEN
 ```
 
-### Cloudflare Containers deployment
+Use the deployed Modal web URL as `BOT_SERVICE_URL` and the same token from step 1 as `MODAL_BOT_TOKEN`.
 
-Production Kraken hosting now uses a Cloudflare Container-backed Durable Object (`KrakenContainer`).
-
-1. Make the model available to the container:
-   - easiest: copy it to `bots/models/kraken_v1.pt` before deploying, or
-   - set a Worker secret so the container downloads it on first start:
-
-```bash
-wrangler secret put KRAKEN_MODEL_URL
-```
-
-2. Optionally tune runtime vars in `wrangler.toml` or secrets/vars:
-
-```toml
-[vars]
-KRAKEN_MODEL_VERSION = "kraken_v1"
-KRAKEN_CONTAINER_POOL_SIZE = "2"
-KRAKEN_DEVICE = "cpu"
-KRAKEN_BUILD_EXTENSIONS = "0"
-KRAKEN_MOVE_TIMEOUT_MS = "30000"
-```
-
-3. Deploy everything together:
+4. Deploy the Worker:
 
 ```bash
 npm run deploy
 ```
 
-Wrangler needs a working local Docker CLI/daemon to build and upload the Kraken container image.
-
-That deploys the Worker, assets, Durable Object migrations, and the Kraken container image defined in `bots/Dockerfile.kraken`.
-
-The Worker keeps the public API the same and forwards Kraken turns internally to the container runtime.
-
-Remote bot turns now run with a 30s timeout, automatically restart/retry once on transient container failures, and continue in the background so the player move request does not stay blocked waiting for Kraken.
+The Worker public API stays the same. Human moves mutate session state in Durable Objects, enqueue a versioned bot-turn job, and the queue consumer calls Modal for Kraken inference.
 
 ## Deploy
 
@@ -128,6 +101,6 @@ npm run deploy
 
 - Static assets are built into `public/`.
 - The Rust engine is compiled to `wasm32-unknown-unknown` and bound both into the Worker and the browser with `wasm-bindgen`.
-- The light bots stay embedded in the Worker/browser wasm bundle; Kraken is exposed through a native Rust HTTP bot service that forwards to the original vendored KrakenBot Python worker loaded from the creator checkpoint.
+- The light bots stay embedded in the Worker/browser wasm bundle; Kraken is exposed through a Modal-hosted FastAPI service that runs the vendored KrakenBot Python worker.
 - A service worker caches the app shell and browser wasm so local games can resume offline after the first successful load.
 - Each online room is backed by a Durable Object instance keyed by the 6 digit room code.

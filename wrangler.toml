@@ -23,15 +23,24 @@ run_worker_first = ["/api/*"]
 
 [[durable_objects.bindings]]
 name = "SESSIONS"
-class_name = "SessionObject"
+class_name = "SessionRuntime"
 
 [[durable_objects.bindings]]
 name = "MATCHMAKER"
-class_name = "MatchmakerObject"
+class_name = "MatchmakerRuntime"
 
-[[durable_objects.bindings]]
-name = "KRAKEN_CONTAINER"
-class_name = "KrakenContainer"
+[[queues.producers]]
+queue = "bot-turns-v2"
+binding = "BOT_TURNS_QUEUE"
+
+[[queues.consumers]]
+queue = "bot-turns-v2"
+max_batch_size = 4
+max_batch_timeout = 1
+max_retries = 8
+retry_delay = 5
+max_concurrency = 8
+dead_letter_queue = "bot-turns-dlq-v2"
 
 [[migrations]]
 tag = "v1"
@@ -45,20 +54,18 @@ new_sqlite_classes = ["SessionObject", "MatchmakerObject"]
 tag = "v3"
 new_sqlite_classes = ["KrakenContainer"]
 
-[[containers]]
-class_name = "KrakenContainer"
-image = "./bots/Dockerfile.kraken"
-image_build_context = "."
-max_instances = 4
+[[migrations]]
+tag = "v4"
+deleted_classes = ["KrakenContainer"]
 
-  [containers.instance_type]
-  vcpu = 1
-  memory_mib = 3072
-  disk_mb = 4000
+[[migrations]]
+tag = "v5"
+new_sqlite_classes = ["SessionRuntime", "MatchmakerRuntime"]
+
+[[migrations]]
+tag = "v6"
+deleted_classes = ["RoomObject", "SessionObject", "MatchmakerObject"]
 
 [vars]
 KRAKEN_MODEL_VERSION = "kraken_v1"
-KRAKEN_CONTAINER_POOL_SIZE = "2"
-KRAKEN_DEVICE = "cpu"
-KRAKEN_BUILD_EXTENSIONS = "0"
 KRAKEN_MOVE_TIMEOUT_MS = "30000"
