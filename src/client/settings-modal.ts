@@ -61,9 +61,7 @@ export class SettingsModal {
       ? settings.localClock
       : mode === "private"
         ? settings.privateClock
-        : mode === "bot"
-          ? settings.botClock
-          : settings.matchmakingClock;
+        : settings.botClock;
     this.setClockFields(
       Boolean(clock),
       clock ? msToSeconds(clock.initialMs) : DEFAULT_CLOCK_BASE_SECONDS,
@@ -74,24 +72,24 @@ export class SettingsModal {
       settingsTitle.textContent = "Local game";
       settingsHint.textContent = "Set a chess clock or play without one.";
       settingsSaveButton.textContent = "Start";
-    } else if (mode === "private") {
+      return;
+    }
+
+    if (mode === "private") {
       settingsTitle.textContent = "Create room";
       settingsHint.textContent = "These settings apply to the room you create from this device.";
       settingsSaveButton.textContent = "Create";
-    } else if (mode === "bot") {
-      settingsTitle.textContent = "Play bot";
-      settingsHint.replaceChildren(this.buildBotHintContent());
-      settingsSaveButton.textContent = "Play";
-      const availableBotNames = this.availableBots.map((bot) => bot.name);
-      this.elements.settingsBotSelect.value = availableBotNames.includes(settings.botName)
-        ? settings.botName
-        : this.availableBots[0]?.name ?? "sprout";
-      this.elements.settingsBotSeatSelect.value = settings.botHumanSeat;
-    } else {
-      settingsTitle.textContent = "Find match";
-      settingsHint.textContent = "You will only be matched with players using the same clock settings.";
-      settingsSaveButton.textContent = "Queue";
+      return;
     }
+
+    settingsTitle.textContent = "Play bot";
+    settingsHint.replaceChildren(this.buildBotHintContent());
+    settingsSaveButton.textContent = "Play";
+    const availableBotNames = this.availableBots.map((bot) => bot.name);
+    this.elements.settingsBotSelect.value = availableBotNames.includes(settings.botName)
+      ? settings.botName
+      : this.availableBots[0]?.name ?? "sprout";
+    this.elements.settingsBotSeatSelect.value = settings.botHumanSeat;
   }
 
   read(mode: SettingsMode): SettingsResult {
@@ -136,7 +134,7 @@ export class SettingsModal {
       case "kraken":
         fragment.append("Hosted ");
         fragment.append(this.createExternalLink("Ramora0/KrakenBot", "https://github.com/Ramora0/KrakenBot"));
-        fragment.append(" neural MCTS from the native Rust + Python runtime.");
+        fragment.append(" neural MCTS from Modal.");
         return;
       default:
         fragment.append(bot.description);

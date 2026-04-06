@@ -9,7 +9,7 @@ export type LocalBindings = {
   playJson: (gameJson: string, stonesJson: string) => string;
 };
 
-export type SettingsMode = "local" | "private" | "bot" | "matchmade";
+export type SettingsMode = "local" | "private" | "bot";
 
 export type PointerState = {
   id: number;
@@ -38,13 +38,12 @@ export type AppState = {
   pinchGesture: PinchGesture | null;
   multiTouchGesture: boolean;
   pollTimer: number;
-  matchmakingTimer: number;
   clockTimer: number;
   pendingSubmit: boolean;
+  pendingBrowserBotPositionId: string | null;
   recentHighlights: Cube[];
   playerId: string;
   settings: LobbySettings;
   activeSettingsMode: SettingsMode | null;
-  matchmakingQueued: boolean;
   serverClockOffsetMs: number;
 };

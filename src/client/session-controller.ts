@@ -1,13 +1,4 @@
-import {
-  cancelMatchmaking,
-  createBotSession,
-  createPrivateSession,
-  joinPrivateSession,
-  loadMatchmakingStatus,
-  loadSessionState,
-  queueMatchmaking,
-  submitSessionTurn,
-} from "./api.js";
+import { createBotSession, createPrivateSession, joinPrivateSession, loadSessionState, submitSessionTurn } from "./api.js";
 import type { AppState, LocalBindings, SettingsMode } from "./app-types.js";
 import type { AppElements } from "./dom.js";
 import { sameCube, cubeDistance, currentControllingPlayer, loadRoomCodeFromUrl } from "./helpers.js";
@@ -23,6 +14,7 @@ import type { BoardRenderer } from "./render.js";
 import { updateControls } from "./session-ui.js";
 import { ROOM_QUERY_PARAM } from "../domain/types.js";
 import type { Cube, SessionRef, SessionView } from "../domain/types.js";
+import { chooseBotMove as chooseBrowserBotMove } from "../bots.js";
 
 export function createSessionController(options: {
   state: AppState;
@@ -56,18 +48,6 @@ export function createSessionController(options: {
       renderer.requestRender();
     }
   };
-  const updateLobbyButtons = (): void => {
-    elements.findMatchButton.textContent = state.matchmakingQueued ? "Cancel search" : "Find match";
-    for (const button of [
-      elements.localModeButton,
-      elements.createRoomButton,
-      elements.playBotButton,
-      elements.joinRoomButton,
-    ]) {
-      button.disabled = state.matchmakingQueued;
-    }
-    elements.joinCodeInput.disabled = state.matchmakingQueued;
-  };
   const stopClockTicker = (): void => {
     if (state.clockTimer) window.clearInterval(state.clockTimer);
     state.clockTimer = 0;
@@ -84,16 +64,54 @@ export function createSessionController(options: {
     if (state.pollTimer) window.clearInterval(state.pollTimer);
     state.pollTimer = 0;
   };
-  const stopMatchmakingPolling = (): void => {
-    if (state.matchmakingTimer) window.clearInterval(state.matchmakingTimer);
-    state.matchmakingTimer = 0;
-  };
   const shouldPauseNetworkSync = (): boolean => document.visibilityState !== "visible" || !navigator.onLine;
+
+  const maybeRunBrowserBotTurn = (session: SessionView): void => {
+    if (
+      session.mode === "local"
+      || !state.sessionRef
+      || !session.yourTurn
+      || session.currentActor?.kind !== "bot"
+      || session.currentActor.execution !== "browser"
+      || !session.currentActor.botName
+      || state.pendingSubmit
+      || state.pendingBrowserBotPositionId === session.positionId
+    ) {
+      return;
+    }
+
+    state.pendingBrowserBotPositionId = session.positionId;
+    refreshControls();
+
+    window.setTimeout(() => {
+      const activeSession = state.session;
+      if (!activeSession || activeSession.positionId !== session.positionId || !state.sessionRef) {
+        state.pendingBrowserBotPositionId = null;
+        refreshControls();
+        return;
+      }
+
+      Promise.resolve()
+        .then(() => chooseBrowserBotMove(session.currentActor!.botName!, activeSession.gameJson))
+        .then((stones) => submitSessionTurn(state.sessionRef!, stones, session.positionId))
+        .then((nextSession) => {
+          state.pendingBrowserBotPositionId = null;
+          applySession(nextSession);
+        })
+        .catch((error) => {
+          state.pendingBrowserBotPositionId = null;
+          elements.turnPill.textContent = error instanceof Error ? error.message : "Could not play bot turn";
+          refreshControls();
+          renderer.requestRender();
+        });
+    }, 20);
+  };
 
   const showLobby = (message: string, roomCode = ""): void => {
     state.session = null;
     state.selected = [];
     state.recentHighlights = [];
+    state.pendingBrowserBotPositionId = null;
     elements.copyRoomButton.dataset.player = "";
     elements.lobby.classList.remove("hidden");
     elements.bottomBar.classList.add("hidden");
@@ -101,7 +119,6 @@ export function createSessionController(options: {
     elements.joinCodeInput.value = roomCode;
     setLobbyError(message);
     stopClockTicker();
-    updateLobbyButtons();
     renderer.requestRender();
   };
 
@@ -114,12 +131,15 @@ export function createSessionController(options: {
 
     state.session = session;
     state.serverClockOffsetMs = session.mode === "local" ? 0 : session.serverNow - Date.now();
+    state.pendingBrowserBotPositionId = state.pendingBrowserBotPositionId === session.positionId
+      ? state.pendingBrowserBotPositionId
+      : null;
     if (session.mode === "local") persistLocalSession(session);
 
     elements.lobby.classList.add("hidden");
     elements.bottomBar.classList.remove("hidden");
     elements.siteFooter.classList.add("hidden");
-    state.selected = (!session.yourTurn || session.winner)
+    state.selected = (!session.yourTurn || session.winner || session.currentActor?.kind === "bot")
       ? []
       : state.selected.filter((cube) => !session.stones.some((stone) => sameCube(stone, cube)));
     state.recentHighlights = highlight ? session.lastTurnStones.slice() : [];
@@ -131,16 +151,18 @@ export function createSessionController(options: {
     startClockTicker();
     refreshControls();
     renderer.requestRender();
+    maybeRunBrowserBotTurn(session);
   };
 
   const isWithinPlacementRange = (cube: Cube): boolean => (state.session?.stones ?? []).some((stone) => cubeDistance(stone, cube) <= 8);
   const isPlayableCell = (cube: Cube): boolean => Boolean(
-    state.session &&
-    !state.session.winner &&
-    (state.session.mode === "local" || state.session.yourTurn) &&
-    state.session.seat !== "spectator" &&
-    !state.session.stones.some((stone) => sameCube(stone, cube)) &&
-    isWithinPlacementRange(cube),
+    state.session
+    && !state.session.winner
+    && state.session.currentActor?.kind !== "bot"
+    && (state.session.mode === "local" || state.session.yourTurn)
+    && state.session.seat !== "spectator"
+    && !state.session.stones.some((stone) => sameCube(stone, cube))
+    && isWithinPlacementRange(cube),
   );
   const toggleSelected = (cube: Cube): void => {
     const existing = state.selected.findIndex((selectedCube) => sameCube(selectedCube, cube));
@@ -164,50 +186,10 @@ export function createSessionController(options: {
     }, POLL_INTERVAL_MS);
   };
 
-  const setMatchmakingState = (queued: boolean, message = queued ? "Searching for an opponent…" : ""): void => {
-    state.matchmakingQueued = queued;
-    setLobbyError(message);
-    updateLobbyButtons();
-  };
-
   const openRemoteSession = (ref: SessionRef, session: SessionView): void => {
     persistSession(ref);
-    setMatchmakingState(false, "");
-    stopMatchmakingPolling();
     applySession(session);
     startPolling();
-  };
-
-  const syncMatchmakingStatus = async (): Promise<boolean> => {
-    const status = await loadMatchmakingStatus(state.playerId);
-    if (status.status === "matched") {
-      openRemoteSession(status.ref, status.session);
-      return true;
-    }
-    setMatchmakingState(status.status === "queued");
-    return false;
-  };
-
-  const queueMatchmakingFlow = async (): Promise<void> => {
-    const status = await queueMatchmaking(state.playerId, state.settings.matchmakingClock);
-    if (status.status === "matched") {
-      openRemoteSession(status.ref, status.session);
-      return;
-    }
-
-    setMatchmakingState(status.status === "queued");
-    stopMatchmakingPolling();
-    if (!state.matchmakingQueued) return;
-
-    state.matchmakingTimer = window.setInterval(() => {
-      if (shouldPauseNetworkSync()) return;
-      syncMatchmakingStatus().catch((error) => {
-        if (shouldPauseNetworkSync()) return;
-        setLobbyError(error instanceof Error ? error.message : "Matchmaking failed");
-        setMatchmakingState(false, "");
-        stopMatchmakingPolling();
-      });
-    }, POLL_INTERVAL_MS);
   };
 
   const resumeNetworkFlows = async (): Promise<void> => {
@@ -216,13 +198,6 @@ export function createSessionController(options: {
         applySession(await loadSessionState(state.sessionRef, state.session?.mode === "local" ? null : state.session));
       } catch {
         // keep saved session for retry
-      }
-    }
-    if (state.matchmakingQueued) {
-      try {
-        await syncMatchmakingStatus();
-      } catch {
-        // keep queued state for retry
       }
     }
     refreshControls();
@@ -273,17 +248,10 @@ export function createSessionController(options: {
     openRemoteSession({ id: result.session.id, code: result.session.code, token: result.token }, result.session);
   };
 
-  const cancelMatchmakingFlow = async (): Promise<void> => {
-    await cancelMatchmaking(state.playerId);
-    stopMatchmakingPolling();
-    setMatchmakingState(false, "");
-  };
-
   const runModeFlow = async (mode: SettingsMode): Promise<void> => {
     if (mode === "local") return startLocalGameFlow();
     if (mode === "private") return createPrivateRoomFlow();
-    if (mode === "bot") return createBotGameFlow();
-    return queueMatchmakingFlow();
+    return createBotGameFlow();
   };
 
   const submitTurnFlow = async (): Promise<void> => {
@@ -297,7 +265,7 @@ export function createSessionController(options: {
             const snapshot = callLocalPlay(localBindings, state.session.gameJson, state.selected);
             return buildLocalSession(snapshot, advanceLocalClock(state.session.clock, snapshot.current_player, Boolean(snapshot.winner), now), now);
           })()
-        : await submitSessionTurn(state.sessionRef!, state.selected);
+        : await submitSessionTurn(state.sessionRef!, state.selected, state.session.positionId);
       state.selected = [];
       applySession(nextSession);
     } catch (error) {
@@ -363,7 +331,6 @@ export function createSessionController(options: {
   };
 
   return {
-    cancelMatchmakingFlow,
     isPlayableCell,
     joinRoomFlow,
     leaveRoom,
@@ -377,6 +344,5 @@ export function createSessionController(options: {
     submitTurnFlow,
     toggleSelected,
     updateHovered,
-    updateLobbyButtons,
   };
 }

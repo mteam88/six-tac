@@ -5,7 +5,6 @@ export type AppElements = {
   localModeButton: HTMLButtonElement;
   createRoomButton: HTMLButtonElement;
   playBotButton: HTMLButtonElement;
-  findMatchButton: HTMLButtonElement;
   joinRoomButton: HTMLButtonElement;
   joinCodeInput: HTMLInputElement;
   bottomBar: HTMLDivElement;
@@ -55,7 +54,6 @@ export function getAppElements(): AppElements {
     localModeButton: requiredElement("local-mode-button"),
     createRoomButton: requiredElement("create-room-button"),
     playBotButton: requiredElement("play-bot-button"),
-    findMatchButton: requiredElement("find-match-button"),
     joinRoomButton: requiredElement("join-room-button"),
     joinCodeInput: requiredElement("join-code-input"),
     bottomBar: requiredElement("bottom-bar"),

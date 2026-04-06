@@ -1,10 +1,12 @@
 import type {
   ClockSettings,
+  CurrentActor,
   Cube,
   EngineSnapshot,
   HumanSeat,
   Participant,
   Player,
+  PositionEval,
   Seat,
   SessionData,
   SessionMode,
@@ -105,15 +107,68 @@ export function getResultReason(session: SessionData): SessionView["resultReason
   return session.result?.reason ?? null;
 }
 
+export function currentActor(session: SessionData, snapshot: EngineSnapshot): CurrentActor | null {
+  const seat = seatForPlayer(snapshot.current_player);
+  const participant = participantForSeat(session, seat);
+  if (!participant) {
+    return null;
+  }
+
+  if (participant.kind === "human") {
+    return {
+      seat,
+      kind: "human",
+      botName: null,
+      execution: null,
+    };
+  }
+
+  return {
+    seat,
+    kind: "bot",
+    botName: participant.botConfig?.name ?? null,
+    execution: participant.botConfig?.execution ?? "remote",
+  };
+}
+
+export function canTokenControlCurrentTurn(session: SessionData, snapshot: EngineSnapshot, token: string | null): boolean {
+  if (!token || session.status !== "active" || getEffectiveWinner(session, snapshot)) {
+    return false;
+  }
+
+  const actor = currentActor(session, snapshot);
+  if (!actor) {
+    return false;
+  }
+
+  if (actor.kind === "human") {
+    return getSeatForToken(session, token) === actor.seat;
+  }
+
+  if (actor.execution !== "browser" || session.type !== "bot") {
+    return false;
+  }
+
+  return session.participants.some((participant) => participant.kind === "human" && participant.token === token);
+}
+
 export function buildSessionView(
   session: SessionData,
   snapshot: EngineSnapshot,
   seat: Seat,
-  now = Date.now(),
+  options: {
+    token: string | null;
+    positionId: string;
+    latestEval: PositionEval | null;
+    pendingRemoteMove: boolean;
+    lastRemoteError: string | null;
+    now?: number;
+  },
 ): SessionView {
   const lastTurn = getLastTurnInfo(snapshot.turns_json);
   const effectiveWinner = getEffectiveWinner(session, snapshot);
   const ready = isSessionReady(session);
+  const now = options.now ?? Date.now();
 
   return {
     id: session.id,
@@ -122,15 +177,10 @@ export function buildSessionView(
     seat,
     status: session.status,
     currentPlayer: snapshot.current_player,
+    currentActor: currentActor(session, snapshot),
     winner: effectiveWinner,
     resultReason: getResultReason(session),
-    yourTurn: Boolean(
-      ready &&
-        session.status === "active" &&
-        !effectiveWinner &&
-        playerForSeat(seat) &&
-        playerForSeat(seat) === snapshot.current_player,
-    ),
+    yourTurn: Boolean(ready && canTokenControlCurrentTurn(session, snapshot, options.token)),
     turns: snapshot.turn_count,
     stones: snapshot.stones,
     lastTurnPlayer: lastTurn.lastTurnPlayer,
@@ -138,7 +188,10 @@ export function buildSessionView(
     gameJson: snapshot.turns_json,
     clock: session.clock ? cloneClock(session.clock) : null,
     serverNow: now,
-    version: session.version,
+    positionId: options.positionId,
+    latestEval: options.latestEval,
+    pendingRemoteMove: options.pendingRemoteMove,
+    lastRemoteError: options.lastRemoteError,
   };
 }
 
@@ -151,6 +204,7 @@ export function buildLocalSessionView(snapshot: EngineSnapshot, now = Date.now()
     seat: "local",
     status: snapshot.winner ? "finished" : "active",
     currentPlayer: snapshot.current_player,
+    currentActor: null,
     winner: snapshot.winner,
     resultReason: snapshot.winner ? "win" : null,
     yourTurn: !snapshot.winner,
@@ -161,7 +215,10 @@ export function buildLocalSessionView(snapshot: EngineSnapshot, now = Date.now()
     gameJson: snapshot.turns_json,
     clock: null,
     serverNow: now,
-    version: now,
+    positionId: String(now),
+    latestEval: null,
+    pendingRemoteMove: false,
+    lastRemoteError: null,
   };
 }
 

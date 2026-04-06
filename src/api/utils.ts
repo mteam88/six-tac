@@ -1,4 +1,3 @@
-import { MATCHMAKER_OBJECT_ID } from "../domain/types";
 import type { Env } from "../env";
 
 export const CLIENT_IP_HEADER = "x-client-ip";
@@ -47,8 +46,4 @@ export function forwardedHeaders(request: Request, headers: HeadersInit = {}): H
 
 export function sessionStub(env: Env, sessionId: string): DurableObjectStub {
   return env.SESSIONS.get(env.SESSIONS.idFromName(sessionId));
-}
-
-export function matchmakerStub(env: Env): DurableObjectStub {
-  return env.MATCHMAKER.get(env.MATCHMAKER.idFromName(MATCHMAKER_OBJECT_ID));
 }

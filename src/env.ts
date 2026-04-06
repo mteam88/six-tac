@@ -1,10 +1,11 @@
-import type { BotTurnJob } from "./bot-turn-queue";
+import type { ComputeJobEnvelope } from "./domain/types";
 
 export type Env = {
   ASSETS: Fetcher;
   SESSIONS: DurableObjectNamespace;
-  MATCHMAKER: DurableObjectNamespace;
-  BOT_TURNS_QUEUE: Queue<BotTurnJob>;
+  COMPUTE_JOBS: DurableObjectNamespace;
+  BEST_MOVE_JOBS_QUEUE: Queue<ComputeJobEnvelope>;
+  EVAL_JOBS_QUEUE: Queue<ComputeJobEnvelope>;
   BOT_SERVICE_URL?: string;
   MODAL_BOT_TOKEN?: string;
   KRAKEN_MODEL_VERSION?: string;

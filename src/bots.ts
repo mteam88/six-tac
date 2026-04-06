@@ -1,4 +1,6 @@
+// @ts-ignore generated at build time
 import * as bindings from "./bot-wasm/bots_bg.js";
+// @ts-ignore generated at build time
 import wasmModule from "./bot-wasm/bots_bg.wasm";
 import type { BotName, Cube } from "./domain/types";
 

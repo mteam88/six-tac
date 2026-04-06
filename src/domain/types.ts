@@ -1,11 +1,11 @@
 export type Seat = "one" | "two" | "spectator" | "local";
 export type HumanSeat = "one" | "two";
 export type Player = "One" | "Two";
-export type SessionMode = "local" | "private" | "bot" | "matchmade";
+export type SessionMode = "local" | "private" | "bot";
 export type SessionStatus = "waiting" | "active" | "finished" | "abandoned";
 export type FinishReason = "win" | "timeout" | "abandoned" | null;
 export type BotName = "sprout" | "seal" | "ambrosia" | "hydra" | "orca" | "kraken";
-export type BotExecution = "browser" | "worker" | "remote";
+export type BotExecution = "browser" | "remote";
 
 export type BotCatalogEntry = {
   name: BotName;
@@ -87,6 +87,21 @@ export type SessionData = {
   result: SessionResult;
 };
 
+export type CurrentActor = {
+  seat: HumanSeat;
+  kind: "human" | "bot";
+  botName: BotName | null;
+  execution: BotExecution | null;
+};
+
+export type PositionEval = {
+  positionId: string;
+  score: number;
+  winProb: number;
+  bestMove: [Cube, Cube] | null;
+  updatedAt: number;
+};
+
 export type SessionView = {
   id: string;
   code: string | null;
@@ -94,6 +109,7 @@ export type SessionView = {
   seat: Seat;
   status: SessionStatus;
   currentPlayer: Player;
+  currentActor: CurrentActor | null;
   winner: Player | null;
   resultReason: FinishReason;
   yourTurn: boolean;
@@ -104,14 +120,17 @@ export type SessionView = {
   gameJson: string;
   clock: ClockState | null;
   serverNow: number;
-  version: number;
+  positionId: string;
+  latestEval: PositionEval | null;
+  pendingRemoteMove: boolean;
+  lastRemoteError: string | null;
 };
 
 export type SessionSyncUnchanged = {
   unchanged: true;
   seat: Seat;
   serverNow: number;
-  version: number;
+  positionId: string;
 };
 
 export type SessionSyncResponse = SessionView | SessionSyncUnchanged;
@@ -127,21 +146,71 @@ export type JoinSessionResponse = {
   session: SessionView;
 };
 
-export type MatchmakingStatus =
+export type ComputePosition = {
+  turnsJson: string;
+};
+
+export type BestMoveComputeRequest = {
+  position: ComputePosition;
+  config: {
+    botName: BotName;
+  };
+  cacheKey?: string | null;
+};
+
+export type BestMoveComputeResult = {
+  stones: [Cube, Cube];
+  modelVersion: string;
+  positionId: string;
+};
+
+export type EvalComputeRequest = {
+  position: ComputePosition;
+  config: {
+    botName: BotName;
+  };
+  cacheKey?: string | null;
+};
+
+export type EvalComputeResult = {
+  score: number;
+  winProb: number;
+  bestMove: [Cube, Cube] | null;
+  modelVersion: string;
+  positionId: string;
+};
+
+export type ComputeJobStatus = "queued" | "running" | "done" | "failed";
+export type ComputeJobKind = "best-move" | "eval";
+
+export type ComputeJobCallback =
   | {
-      status: "idle";
+      type: "session-remote-move";
+      sessionId: string;
+      basePositionId: string;
     }
   | {
-      status: "queued";
-      queuedAt: number;
-      clock: ClockSettings | null;
-    }
-  | {
-      status: "matched";
-      ref: SessionRef;
-      session: SessionView;
+      type: "session-eval";
+      sessionId: string;
+      positionId: string;
     };
+
+export type ComputeJobRecord = {
+  id: string;
+  kind: ComputeJobKind;
+  status: ComputeJobStatus;
+  positionId: string;
+  request: BestMoveComputeRequest | EvalComputeRequest;
+  result: BestMoveComputeResult | EvalComputeResult | null;
+  error: string | null;
+  callback: ComputeJobCallback | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ComputeJobEnvelope = {
+  jobId: string;
+};
 
 export const EMPTY_GAME_JSON = '{"turns":[]}';
 export const ROOM_QUERY_PARAM = "room";
-export const MATCHMAKER_OBJECT_ID = "global";

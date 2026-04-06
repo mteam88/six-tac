@@ -4,24 +4,26 @@ import {
   handleCreateBotSession,
   handleCreatePrivateSession,
   handleJoinSession,
-  handleSessionMove,
+  handleSessionMoves,
   handleSessionState,
 } from "./api/sessions";
 import {
-  handleCancelMatchmaking,
-  handleMatchmakingStatus,
-  handleQueueMatchmaking,
-} from "./api/matchmaking";
+  handleComputeBestMove,
+  handleComputeBestMoveJob,
+  handleComputeEval,
+  handleComputeEvalJob,
+  handleComputeJobState,
+} from "./api/compute";
 import { json } from "./api/utils";
-import { handleBotTurnBatch } from "./bot-turn-queue";
-import { MatchmakerObject } from "./durable/matchmaker-object";
+import { ComputeJobObject, handleBestMoveJobBatch, handleEvalJobBatch } from "./compute-jobs";
 import { SessionObject } from "./durable/session-object";
+import type { ComputeJobEnvelope } from "./domain/types";
 import type { Env } from "./env";
 
-export class RoomObject extends SessionObject {}
-export { SessionObject, MatchmakerObject };
+export { SessionObject };
 export class SessionRuntime extends SessionObject {}
-export class MatchmakerRuntime extends MatchmakerObject {}
+export { ComputeJobObject };
+export class ComputeJobRuntime extends ComputeJobObject {}
 
 function sessionRoute(pathname: string): { sessionId: string; action: string } | null {
   const parts = pathname.split("/").filter(Boolean);
@@ -31,6 +33,15 @@ function sessionRoute(pathname: string): { sessionId: string; action: string } |
   const [,,, sessionId, action] = parts;
   if (!sessionId || !action) return null;
   return { sessionId, action };
+}
+
+function computeJobRoute(pathname: string): { jobId: string } | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 5 || parts[0] !== "api" || parts[1] !== "v1" || parts[2] !== "compute" || parts[3] !== "jobs") {
+    return null;
+  }
+  const jobId = parts[4];
+  return jobId ? { jobId } : null;
 }
 
 export default {
@@ -51,6 +62,27 @@ export default {
         return handleBotList(env);
       }
 
+      if (request.method === "POST" && pathname === "/api/v1/compute/best-move") {
+        return handleComputeBestMove(request, env);
+      }
+
+      if (request.method === "POST" && pathname === "/api/v1/compute/best-move/jobs") {
+        return handleComputeBestMoveJob(request, env);
+      }
+
+      if (request.method === "POST" && pathname === "/api/v1/compute/eval") {
+        return handleComputeEval(request, env);
+      }
+
+      if (request.method === "POST" && pathname === "/api/v1/compute/eval/jobs") {
+        return handleComputeEvalJob(request, env);
+      }
+
+      const computeJob = computeJobRoute(pathname);
+      if (computeJob && request.method === "GET") {
+        return handleComputeJobState(request, env, computeJob.jobId);
+      }
+
       if (request.method === "POST" && pathname === "/api/v1/sessions/private") {
         return handleCreatePrivateSession(request, env);
       }
@@ -67,20 +99,8 @@ export default {
       if (session && request.method === "GET" && session.action === "state") {
         return handleSessionState(request, env, session.sessionId);
       }
-      if (session && request.method === "POST" && session.action === "move") {
-        return handleSessionMove(request, env, session.sessionId);
-      }
-
-      if (request.method === "POST" && pathname === "/api/v1/matchmaking/queue") {
-        return handleQueueMatchmaking(request, env);
-      }
-
-      if (request.method === "GET" && pathname === "/api/v1/matchmaking/status") {
-        return handleMatchmakingStatus(request, env);
-      }
-
-      if (request.method === "POST" && pathname === "/api/v1/matchmaking/cancel") {
-        return handleCancelMatchmaking(request, env);
+      if (session && request.method === "POST" && session.action === "moves") {
+        return handleSessionMoves(request, env, session.sessionId);
       }
 
       return env.ASSETS.fetch(request);
@@ -89,7 +109,16 @@ export default {
     }
   },
 
-  async queue(batch: MessageBatch<import("./bot-turn-queue").BotTurnJob>, env: Env): Promise<void> {
-    await handleBotTurnBatch(batch, env);
+  async queue(batch: MessageBatch<ComputeJobEnvelope>, env: Env): Promise<void> {
+    const queueName = batch.queue;
+    if (queueName === "best-move-jobs-v1") {
+      await handleBestMoveJobBatch(batch, env);
+      return;
+    }
+    if (queueName === "eval-jobs-v1") {
+      await handleEvalJobBatch(batch, env);
+      return;
+    }
+    throw new Error(`Unknown queue: ${queueName}`);
   },
 } satisfies ExportedHandler<Env>;

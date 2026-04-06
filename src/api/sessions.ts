@@ -20,12 +20,12 @@ async function fetchSessionState(env: Env, sessionId: string, token: string): Pr
     `https://session/state?token=${encodeURIComponent(token)}`,
   );
   if (!response.ok) {
-    const error = (await response.json()) as { error?: string };
+    const error = await response.json() as { error?: string };
     throw new Error(error.error || "Could not load session");
   }
   return {
     token,
-    session: (await response.json()) as JoinSessionResponse["session"],
+    session: await response.json() as JoinSessionResponse["session"],
   };
 }
 
@@ -153,6 +153,6 @@ export async function handleSessionState(request: Request, env: Env, sessionId: 
   }));
 }
 
-export async function handleSessionMove(request: Request, env: Env, sessionId: string): Promise<Response> {
-  return sessionStub(env, sessionId).fetch(new Request("https://session/move", request));
+export async function handleSessionMoves(request: Request, env: Env, sessionId: string): Promise<Response> {
+  return sessionStub(env, sessionId).fetch(new Request("https://session/moves", request));
 }

@@ -65,19 +65,39 @@ class KrakenWorkerProcess:
             return line
         raise RuntimeError("Kraken worker exited unexpectedly")
 
-    def best_move(self, game_json):
+    def _request(self, payload: dict):
         if self._proc.stdin is None:
             raise RuntimeError("Kraken worker stdin is unavailable")
 
         with self._lock:
-            self._proc.stdin.write(json.dumps({"game_json": game_json}) + "\n")
+            self._proc.stdin.write(json.dumps(payload) + "\n")
             self._proc.stdin.flush()
-            payload = json.loads(self._read_line())
+            return json.loads(self._read_line())
 
+    def best_move(self, game_json, cache_key=None):
+        payload = self._request({
+            "mode": "best_move",
+            "game_json": game_json,
+            "cache_key": cache_key,
+        })
         stones = payload.get("stones")
         if not isinstance(stones, list) or len(stones) != 2:
             raise RuntimeError(payload.get("error") or "Kraken worker returned no move")
         return stones
+
+    def evaluate(self, game_json, cache_key=None):
+        payload = self._request({
+            "mode": "eval",
+            "game_json": game_json,
+            "cache_key": cache_key,
+            "advance_session": False,
+        })
+        score = payload.get("score")
+        win_prob = payload.get("win_prob")
+        best_move = payload.get("best_move")
+        if not isinstance(score, (int, float)) or not isinstance(win_prob, (int, float)):
+            raise RuntimeError(payload.get("error") or "Kraken worker returned no eval")
+        return float(score), float(win_prob), best_move if isinstance(best_move, list) else None
 
     def close(self):
         if self._proc.poll() is not None:
@@ -130,9 +150,25 @@ def web():
         game_json = payload.get("game_json")
         if not isinstance(game_json, str):
             raise HTTPException(status_code=400, detail="Missing game_json")
-        stones = await asyncio.to_thread(service.state.worker.best_move, game_json)
+        stones = await asyncio.to_thread(service.state.worker.best_move, game_json, payload.get("cache_key"))
         return {
             "stones": stones,
+            "model_version": os.environ.get("KRAKEN_MODEL_VERSION", "kraken_v1"),
+        }
+
+    @service.post("/v1/eval")
+    async def eval_position(request: Request, _: object = Depends(require_token)):
+        payload = await request.json()
+        if payload.get("bot_name") != "kraken":
+            raise HTTPException(status_code=400, detail="Only kraken is served here")
+        game_json = payload.get("game_json")
+        if not isinstance(game_json, str):
+            raise HTTPException(status_code=400, detail="Missing game_json")
+        score, win_prob, best_move = await asyncio.to_thread(service.state.worker.evaluate, game_json, payload.get("cache_key"))
+        return {
+            "score": score,
+            "win_prob": win_prob,
+            "best_move": best_move,
             "model_version": os.environ.get("KRAKEN_MODEL_VERSION", "kraken_v1"),
         }
 

@@ -1,18 +1,21 @@
 import { DurableObject } from "cloudflare:workers";
 import { clientAddress, json, readJson } from "../api/utils";
+import { createBestMoveJob } from "../compute-jobs";
 import { completeMove, expireSessionOnClock, getDeadlineAt, startClock } from "../domain/clock";
+import { positionIdForTurnsJson } from "../domain/position";
 import {
   applySnapshotResult,
   buildSessionView,
+  canTokenControlCurrentTurn,
   createToken,
   getSeatForToken,
   isSessionReady,
   participantForSeat,
   playerForSeat,
+  seatForPlayer,
 } from "../domain/session-state";
-import type { BotName, Cube, EngineSnapshot, HumanSeat, SessionData, Seat } from "../domain/types";
+import type { BotName, Cube, EngineSnapshot, HumanSeat, PositionEval, SessionData, Seat } from "../domain/types";
 import type { Env } from "../env";
-import type { BotTurnJob } from "../bot-turn-queue";
 import { play_json, snapshot_json } from "../engine";
 import { FixedWindowRateLimiter, rateLimitKey } from "./rate-limit";
 
@@ -28,16 +31,13 @@ const SESSION_JOIN_LIMIT = {
   retryAfterSeconds: 30,
 };
 
-type PendingBotJob = {
-  version: number;
-  botName: BotName;
-  enqueuedAt: number;
-};
-
 type StoredSessionData = SessionData & {
   snapshot: EngineSnapshot;
-  pendingBotJob: PendingBotJob | null;
-  lastBotError: string | null;
+  headPositionId: string;
+  pendingRemoteMoveJobId: string | null;
+  pendingRemoteMoveBasePositionId: string | null;
+  latestEval: PositionEval | null;
+  lastRemoteError: string | null;
 };
 
 type LegacyRoomData = {
@@ -68,27 +68,75 @@ function tooManyRequests(retryAfterSeconds: number): Response {
   );
 }
 
+function isStoredSessionData(value: Record<string, unknown>): boolean {
+  return typeof value.headPositionId === "string";
+}
+
+function isPositionEval(value: unknown): value is PositionEval {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.positionId === "string"
+    && typeof candidate.score === "number"
+    && typeof candidate.winProb === "number"
+    && typeof candidate.updatedAt === "number";
+}
+
+function normalizeParticipants(session: SessionData): SessionData["participants"] {
+  return session.participants.map((participant) => {
+    if (participant.kind !== "bot" || !participant.botConfig) {
+      return participant;
+    }
+    return {
+      ...participant,
+      botConfig: {
+        ...participant.botConfig,
+        execution: participant.botConfig.execution === "worker" ? "browser" : participant.botConfig.execution,
+      },
+    };
+  });
+}
+
 export class SessionObject extends DurableObject<Env> {
   private readonly rateLimiter = new FixedWindowRateLimiter();
+
+  private async buildStoredSession(session: SessionData): Promise<StoredSessionData> {
+    const snapshot = callSnapshot(session.turnsJson);
+    return {
+      ...session,
+      participants: normalizeParticipants(session),
+      snapshot,
+      headPositionId: await positionIdForTurnsJson(session.turnsJson),
+      pendingRemoteMoveJobId: null,
+      pendingRemoteMoveBasePositionId: null,
+      latestEval: null,
+      lastRemoteError: null,
+    };
+  }
 
   private async loadSession(): Promise<StoredSessionData | null> {
     const stored = await this.ctx.storage.get<Record<string, unknown>>("session");
     if (stored) {
       const turnsJson = typeof stored.turnsJson === "string" ? stored.turnsJson : '{"turns":[]}';
       const snapshot = (stored.snapshot as EngineSnapshot | undefined) ?? callSnapshot(turnsJson);
-      const version = typeof stored.version === "number" ? stored.version : snapshot.turn_count;
-      const migrated: StoredSessionData = {
+      const session = {
         ...(stored as SessionData),
+        participants: normalizeParticipants(stored as SessionData),
         turnsJson,
-        version,
         snapshot,
-        pendingBotJob: isPendingBotJob(stored.pendingBotJob) ? stored.pendingBotJob : null,
-        lastBotError: typeof stored.lastBotError === "string"
-          ? stored.lastBotError
-          : readLegacyBotTurnError(stored.botTurn),
-      };
-      await this.ctx.storage.put("session", migrated);
-      return migrated;
+        headPositionId: isStoredSessionData(stored)
+          ? stored.headPositionId as string
+          : await positionIdForTurnsJson(turnsJson),
+        pendingRemoteMoveJobId: typeof stored.pendingRemoteMoveJobId === "string" ? stored.pendingRemoteMoveJobId : null,
+        pendingRemoteMoveBasePositionId: typeof stored.pendingRemoteMoveBasePositionId === "string"
+          ? stored.pendingRemoteMoveBasePositionId
+          : null,
+        latestEval: isPositionEval(stored.latestEval) ? stored.latestEval : null,
+        lastRemoteError: typeof stored.lastRemoteError === "string" ? stored.lastRemoteError : null,
+      } satisfies StoredSessionData;
+      await this.ctx.storage.put("session", session);
+      return session;
     }
 
     const legacyRoom = await this.ctx.storage.get<LegacyRoomData>("room");
@@ -122,8 +170,11 @@ export class SessionObject extends DurableObject<Env> {
       clock: null,
       result: snapshot.winner ? { winner: snapshot.winner, reason: "win" } : null,
       snapshot,
-      pendingBotJob: null,
-      lastBotError: null,
+      headPositionId: await positionIdForTurnsJson(legacyRoom.turnsJson),
+      pendingRemoteMoveJobId: null,
+      pendingRemoteMoveBasePositionId: null,
+      latestEval: null,
+      lastRemoteError: null,
     };
 
     await this.ctx.storage.put("session", migrated);
@@ -164,72 +215,69 @@ export class SessionObject extends DurableObject<Env> {
   private async maybeExpireSession(session: StoredSessionData): Promise<void> {
     const now = Date.now();
     if (expireSessionOnClock(session, now)) {
-      session.pendingBotJob = null;
+      session.pendingRemoteMoveJobId = null;
+      session.pendingRemoteMoveBasePositionId = null;
       session.updatedAt = now;
       await this.saveSession(session);
     }
   }
 
-  private getCurrentBotParticipant(session: StoredSessionData) {
+  private getCurrentRemoteBot(session: StoredSessionData): { botName: BotName; seat: HumanSeat } | null {
     if (session.status !== "active" || session.result) {
       return null;
     }
 
-    const currentSeat: HumanSeat = session.snapshot.current_player === "One" ? "one" : "two";
-    const participant = participantForSeat(session, currentSeat);
-    return participant?.kind === "bot" && participant.botConfig ? participant : null;
+    const seat = seatForPlayer(session.snapshot.current_player);
+    const participant = participantForSeat(session, seat);
+    if (participant?.kind !== "bot" || participant.botConfig?.execution !== "remote" || !participant.botConfig.name) {
+      return null;
+    }
+
+    return { botName: participant.botConfig.name, seat };
   }
 
-  private buildBotTurnJob(session: StoredSessionData, botName: BotName): BotTurnJob {
-    return {
+  private async ensureRemoteTurnScheduled(session: StoredSessionData): Promise<void> {
+    const participant = this.getCurrentRemoteBot(session);
+    if (!participant) {
+      session.pendingRemoteMoveJobId = null;
+      session.pendingRemoteMoveBasePositionId = null;
+      return;
+    }
+
+    if (session.pendingRemoteMoveBasePositionId === session.headPositionId && session.pendingRemoteMoveJobId) {
+      return;
+    }
+
+    const job = await createBestMoveJob(this.env, {
+      position: { turnsJson: session.turnsJson },
+      config: { botName: participant.botName },
+      cacheKey: session.id,
+    }, {
+      type: "session-remote-move",
       sessionId: session.id,
-      version: session.version,
-      botName,
-      turnsJson: session.turnsJson,
-    };
-  }
+      basePositionId: session.headPositionId,
+    });
 
-  private async enqueueCurrentBotTurn(session: StoredSessionData): Promise<void> {
-    const participant = this.getCurrentBotParticipant(session);
-    if (!participant?.botConfig) {
-      session.pendingBotJob = null;
-      return;
-    }
-
-    if (session.pendingBotJob?.version === session.version) {
-      return;
-    }
-
-    session.pendingBotJob = {
-      version: session.version,
-      botName: participant.botConfig.name,
-      enqueuedAt: Date.now(),
-    };
-    session.lastBotError = null;
+    session.pendingRemoteMoveJobId = job.id;
+    session.pendingRemoteMoveBasePositionId = session.headPositionId;
+    session.lastRemoteError = null;
     session.updatedAt = Date.now();
     await this.saveSession(session);
-
-    try {
-      await this.env.BOT_TURNS_QUEUE.send(this.buildBotTurnJob(session, participant.botConfig.name));
-    } catch (error) {
-      session.lastBotError = error instanceof Error ? error.message : String(error);
-      session.updatedAt = Date.now();
-      await this.saveSession(session);
-      console.error("failed to enqueue bot turn", {
-        sessionId: session.id,
-        version: session.version,
-        botName: participant.botConfig.name,
-        error: session.lastBotError,
-      });
-    }
   }
 
-  private async snapshotForView(session: StoredSessionData, token: string | null): Promise<{ seat: Seat; view: ReturnType<typeof buildSessionView> }> {
+  private async buildView(session: StoredSessionData, token: string | null, now = Date.now()) {
     await this.maybeExpireSession(session);
     const seat = getSeatForToken(session, token);
     return {
       seat,
-      view: buildSessionView(session, session.snapshot, seat),
+      view: buildSessionView(session, session.snapshot, seat, {
+        token,
+        positionId: session.headPositionId,
+        latestEval: session.latestEval,
+        pendingRemoteMove: session.pendingRemoteMoveBasePositionId === session.headPositionId,
+        lastRemoteError: session.lastRemoteError,
+        now,
+      }),
     };
   }
 
@@ -238,6 +286,30 @@ export class SessionObject extends DurableObject<Env> {
       return null;
     }
     return tooManyRequests(limit.retryAfterSeconds);
+  }
+
+  private async applyCommittedMove(session: StoredSessionData, nextSnapshot: EngineSnapshot, now: number): Promise<void> {
+    session.turnsJson = nextSnapshot.turns_json;
+    session.snapshot = nextSnapshot;
+    session.headPositionId = await positionIdForTurnsJson(nextSnapshot.turns_json);
+    session.version = nextSnapshot.turn_count;
+    session.pendingRemoteMoveJobId = null;
+    session.pendingRemoteMoveBasePositionId = null;
+    session.latestEval = null;
+    session.lastRemoteError = null;
+    session.updatedAt = now;
+    if (!applySnapshotResult(session, nextSnapshot, now)) {
+      const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
+      completeMove(session.clock, nextSeat, now);
+    }
+    await this.saveSession(session);
+    try {
+      await this.ensureRemoteTurnScheduled(session);
+    } catch (error) {
+      session.lastRemoteError = error instanceof Error ? error.message : String(error);
+      session.updatedAt = Date.now();
+      await this.saveSession(session);
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -251,17 +323,16 @@ export class SessionObject extends DurableObject<Env> {
         }
 
         const session = await readJson<SessionData>(request);
-        const snapshot = callSnapshot(session.turnsJson);
-        const storedSession: StoredSessionData = {
-          ...session,
-          version: typeof session.version === "number" ? session.version : snapshot.turn_count,
-          snapshot,
-          pendingBotJob: null,
-          lastBotError: null,
-        };
-        this.ensureActiveClock(storedSession, snapshot, Date.now());
+        const storedSession = await this.buildStoredSession(session);
+        this.ensureActiveClock(storedSession, storedSession.snapshot, Date.now());
         await this.saveSession(storedSession);
-        await this.enqueueCurrentBotTurn(storedSession);
+        try {
+          await this.ensureRemoteTurnScheduled(storedSession);
+        } catch (error) {
+          storedSession.lastRemoteError = error instanceof Error ? error.message : String(error);
+          storedSession.updatedAt = Date.now();
+          await this.saveSession(storedSession);
+        }
         return json({ ok: true }, 201);
       }
 
@@ -271,55 +342,54 @@ export class SessionObject extends DurableObject<Env> {
 
       const session = existingSession;
 
-      if (request.method === "POST" && url.pathname === "/internal/bot-job/check") {
+      if (request.method === "POST" && url.pathname === "/internal/apply-remote-move") {
         await this.maybeExpireSession(session);
-        const body = await readJson<{ version?: number }>(request);
-        const current =
-          session.status === "active"
-          && !session.result
-          && session.pendingBotJob?.version === body.version
-          && Boolean(this.getCurrentBotParticipant(session));
-        return json({ current });
-      }
-
-      if (request.method === "POST" && url.pathname === "/internal/bot-job/apply") {
-        await this.maybeExpireSession(session);
-        const body = await readJson<{ version?: number; stones?: Cube[] }>(request);
+        const body = await readJson<{ basePositionId?: string; stones?: Cube[] }>(request);
         if (
           session.status !== "active"
           || session.result
-          || session.pendingBotJob?.version !== body.version
+          || session.headPositionId !== body.basePositionId
           || !Array.isArray(body.stones)
           || body.stones.length !== 2
+          || !this.getCurrentRemoteBot(session)
         ) {
           return json({ applied: false });
         }
 
         const now = Date.now();
         const nextSnapshot = callPlay(session.turnsJson, body.stones);
-        session.turnsJson = nextSnapshot.turns_json;
-        session.snapshot = nextSnapshot;
-        session.version += 1;
-        session.pendingBotJob = null;
-        session.lastBotError = null;
-        session.updatedAt = now;
-        if (!applySnapshotResult(session, nextSnapshot, now)) {
-          const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
-          completeMove(session.clock, nextSeat, now);
-        }
-        await this.saveSession(session);
-        await this.enqueueCurrentBotTurn(session);
+        await this.applyCommittedMove(session, nextSnapshot, now);
         return json({ applied: true });
       }
 
-      if (request.method === "POST" && url.pathname === "/internal/bot-job/fail") {
-        const body = await readJson<{ version?: number; error?: string }>(request);
-        if (session.pendingBotJob?.version === body.version) {
-          session.lastBotError = String(body.error || "Bot turn failed");
+      if (request.method === "POST" && url.pathname === "/internal/remote-move-failed") {
+        const body = await readJson<{ basePositionId?: string; error?: string }>(request);
+        if (session.headPositionId === body.basePositionId && this.getCurrentRemoteBot(session)) {
+          session.lastRemoteError = String(body.error || "Remote bot turn failed");
           session.updatedAt = Date.now();
           await this.saveSession(session);
         }
         return json({ ok: true });
+      }
+
+      if (request.method === "POST" && url.pathname === "/internal/apply-eval") {
+        const body = await readJson<{ positionId?: string; score?: number; winProb?: number; bestMove?: [Cube, Cube] | null }>(request);
+        if (session.headPositionId !== body.positionId) {
+          return json({ applied: false });
+        }
+        if (!Number.isFinite(body.score) || !Number.isFinite(body.winProb)) {
+          return json({ applied: false });
+        }
+        session.latestEval = {
+          positionId: body.positionId!,
+          score: Number(body.score),
+          winProb: Number(body.winProb),
+          bestMove: Array.isArray(body.bestMove) ? body.bestMove : null,
+          updatedAt: Date.now(),
+        };
+        session.updatedAt = Date.now();
+        await this.saveSession(session);
+        return json({ applied: true });
       }
 
       if (request.method === "POST" && url.pathname === "/join") {
@@ -335,7 +405,7 @@ export class SessionObject extends DurableObject<Env> {
         const incomingToken = body.token ?? null;
         const existingSeat = getSeatForToken(session, incomingToken);
         if (existingSeat !== "spectator" && incomingToken) {
-          const { view } = await this.snapshotForView(session, incomingToken);
+          const { view } = await this.buildView(session, incomingToken);
           return json({ token: incomingToken, session: view });
         }
 
@@ -365,11 +435,11 @@ export class SessionObject extends DurableObject<Env> {
           }
           session.updatedAt = Date.now();
           await this.saveSession(session);
-          const { view } = await this.snapshotForView(session, token);
+          const { view } = await this.buildView(session, token);
           return json({ token, session: view });
         }
 
-        const { view } = await this.snapshotForView(session, token);
+        const { view } = await this.buildView(session, token);
         return json({ token, session: view });
       }
 
@@ -385,26 +455,25 @@ export class SessionObject extends DurableObject<Env> {
 
         await this.maybeExpireSession(session);
         const seat = getSeatForToken(session, token);
-        const knownVersion = Number(url.searchParams.get("version") || "");
+        const knownPositionId = url.searchParams.get("knownPositionId");
         const knownSeat = url.searchParams.get("seat");
-        if (Number.isFinite(knownVersion) && knownVersion === session.version && knownSeat === seat) {
+        if (knownPositionId && knownPositionId === session.headPositionId && knownSeat === seat) {
           return json({
             unchanged: true,
             seat,
             serverNow: Date.now(),
-            version: session.version,
+            positionId: session.headPositionId,
           });
         }
 
-        return json(buildSessionView(session, session.snapshot, seat));
+        return json((await this.buildView(session, token)).view);
       }
 
-      if (request.method === "POST" && url.pathname === "/move") {
-        const body = await readJson<{ token?: string | null; stones?: Cube[] }>(request);
+      if (request.method === "POST" && url.pathname === "/moves") {
+        const body = await readJson<{ token?: string | null; basePositionId?: string; stones?: Cube[] }>(request);
         const token = body.token ?? null;
         const seat = getSeatForToken(session, token);
-        const player = playerForSeat(seat);
-        if (!player) {
+        if (seat === "spectator") {
           return json({ error: "You are not seated in this session" }, 403);
         }
 
@@ -412,7 +481,8 @@ export class SessionObject extends DurableObject<Env> {
         const snapshot = session.snapshot;
         this.ensureActiveClock(session, snapshot, now);
         if (expireSessionOnClock(session, now)) {
-          session.pendingBotJob = null;
+          session.pendingRemoteMoveJobId = null;
+          session.pendingRemoteMoveBasePositionId = null;
           session.updatedAt = now;
           await this.saveSession(session);
           return json({ error: "Time has already expired for this turn" }, 400);
@@ -423,28 +493,19 @@ export class SessionObject extends DurableObject<Env> {
         if (session.result || snapshot.winner) {
           return json({ error: "Game is already over" }, 400);
         }
-        if (snapshot.current_player !== player) {
-          return json({ error: "It is not your turn" }, 400);
+        if (session.headPositionId !== body.basePositionId) {
+          return json({ error: "Position has advanced. Refresh and try again." }, 409);
+        }
+        if (!canTokenControlCurrentTurn(session, snapshot, token)) {
+          return json({ error: "You cannot act for the current turn" }, 403);
         }
         if (!Array.isArray(body.stones) || body.stones.length !== 2) {
           return json({ error: "A turn must contain exactly 2 stones" }, 400);
         }
 
         const nextSnapshot = callPlay(session.turnsJson, body.stones);
-        session.turnsJson = nextSnapshot.turns_json;
-        session.snapshot = nextSnapshot;
-        session.version += 1;
-        session.pendingBotJob = null;
-        session.lastBotError = null;
-        session.updatedAt = now;
-        if (!applySnapshotResult(session, nextSnapshot, now)) {
-          const nextSeat: HumanSeat = nextSnapshot.current_player === "One" ? "one" : "two";
-          completeMove(session.clock, nextSeat, now);
-        }
-        await this.saveSession(session);
-        await this.enqueueCurrentBotTurn(session);
-        const { view } = await this.snapshotForView(session, token);
-        return json(view);
+        await this.applyCommittedMove(session, nextSnapshot, now);
+        return json((await this.buildView(session, token, now)).view);
       }
 
       return json({ error: "Not found" }, 404);
@@ -463,7 +524,8 @@ export class SessionObject extends DurableObject<Env> {
     const now = Date.now();
     this.ensureActiveClock(session, session.snapshot, now);
     if (expireSessionOnClock(session, now)) {
-      session.pendingBotJob = null;
+      session.pendingRemoteMoveJobId = null;
+      session.pendingRemoteMoveBasePositionId = null;
       session.updatedAt = now;
       await this.saveSession(session);
       return;
@@ -471,22 +533,4 @@ export class SessionObject extends DurableObject<Env> {
 
     await this.syncAlarm(session);
   }
-}
-
-function isPendingBotJob(value: unknown): value is PendingBotJob {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.version === "number"
-    && typeof candidate.botName === "string"
-    && typeof candidate.enqueuedAt === "number";
-}
-
-function readLegacyBotTurnError(value: unknown): string | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.lastError === "string" ? candidate.lastError : null;
 }

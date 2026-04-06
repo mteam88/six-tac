@@ -76,7 +76,11 @@ export function buildLocalSession(snapshot: EngineSnapshot, clock: ClockState | 
     gameJson: snapshot.turns_json,
     clock,
     serverNow: now,
-    version: now,
+    positionId: String(now),
+    currentActor: null,
+    latestEval: null,
+    pendingRemoteMove: false,
+    lastRemoteError: null,
   };
 }
 
@@ -131,7 +135,7 @@ export function finishLocalClockIfExpired(session: SessionView | null, now = Dat
   session.winner = clock.flaggedSeat === "one" ? "Two" : "One";
   session.yourTurn = false;
   session.serverNow = now;
-  session.version = now;
+  session.positionId = String(now);
   return true;
 }
 

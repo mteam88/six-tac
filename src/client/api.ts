@@ -5,7 +5,6 @@ import type {
   Cube,
   HumanSeat,
   JoinSessionResponse,
-  MatchmakingStatus,
   SessionRef,
   SessionSyncResponse,
   SessionSyncUnchanged,
@@ -67,7 +66,7 @@ export async function loadSessionState(ref: SessionRef, previousSession: Session
   });
 
   if (previousSession && previousSession.mode !== "local") {
-    params.set("version", String(previousSession.version));
+    params.set("knownPositionId", previousSession.positionId);
     params.set("seat", previousSession.seat);
   }
 
@@ -80,7 +79,7 @@ export async function loadSessionState(ref: SessionRef, previousSession: Session
       ...previousSession,
       seat: response.seat,
       serverNow: response.serverNow,
-      version: response.version,
+      positionId: response.positionId,
     };
   }
 
@@ -91,27 +90,9 @@ export async function loadSessionState(ref: SessionRef, previousSession: Session
   return response;
 }
 
-export function submitSessionTurn(ref: SessionRef, stones: Cube[]): Promise<SessionView> {
-  return requestJson<SessionView>(`/api/v1/sessions/${encodeURIComponent(ref.id)}/move`, {
+export function submitSessionTurn(ref: SessionRef, stones: Cube[], basePositionId: string): Promise<SessionView> {
+  return requestJson<SessionView>(`/api/v1/sessions/${encodeURIComponent(ref.id)}/moves`, {
     method: "POST",
-    body: JSON.stringify({ token: ref.token, stones }),
-  });
-}
-
-export function queueMatchmaking(playerId: string, clock: ClockSettings | null): Promise<MatchmakingStatus> {
-  return requestJson<MatchmakingStatus>("/api/v1/matchmaking/queue", {
-    method: "POST",
-    body: JSON.stringify({ playerId, clock }),
-  });
-}
-
-export function loadMatchmakingStatus(playerId: string): Promise<MatchmakingStatus> {
-  return requestJson<MatchmakingStatus>(`/api/v1/matchmaking/status?playerId=${encodeURIComponent(playerId)}`);
-}
-
-export function cancelMatchmaking(playerId: string): Promise<MatchmakingStatus> {
-  return requestJson<MatchmakingStatus>("/api/v1/matchmaking/cancel", {
-    method: "POST",
-    body: JSON.stringify({ playerId }),
+    body: JSON.stringify({ token: ref.token, stones, basePositionId }),
   });
 }

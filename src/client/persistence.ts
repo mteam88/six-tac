@@ -12,7 +12,6 @@ export type LobbySettings = {
   botClock: ClockSettings | null;
   botName: BotName;
   botHumanSeat: HumanSeat;
-  matchmakingClock: ClockSettings | null;
 };
 
 export type LocalGameSave = {
@@ -26,7 +25,6 @@ const DEFAULT_SETTINGS: LobbySettings = {
   botClock: null,
   botName: "sprout",
   botHumanSeat: "two",
-  matchmakingClock: null,
 };
 
 function sanitizeBotName(botName: BotName | undefined): BotName {
@@ -51,7 +49,6 @@ export function loadSettings(): LobbySettings {
     const parsed = JSON.parse(raw) as Partial<LobbySettings> & {
       privateClockTurnMs?: number | null;
       botClockTurnMs?: number | null;
-      matchmakingClockTurnMs?: number | null;
       localMoveTimerMs?: number | null;
       localTimerMs?: number | null;
     };
@@ -67,7 +64,6 @@ export function loadSettings(): LobbySettings {
       botClock: parsed.botClock ?? (parsed.botClockTurnMs ? { initialMs: parsed.botClockTurnMs, incrementMs: 0 } : null),
       botName: sanitizeBotName(parsed.botName),
       botHumanSeat: sanitizeHumanSeat(parsed.botHumanSeat),
-      matchmakingClock: parsed.matchmakingClock ?? (parsed.matchmakingClockTurnMs ? { initialMs: parsed.matchmakingClockTurnMs, incrementMs: 0 } : null),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

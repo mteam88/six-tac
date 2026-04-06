@@ -30,26 +30,27 @@ function createState(): AppState {
     pinchGesture: null,
     multiTouchGesture: false,
     pollTimer: 0,
-    matchmakingTimer: 0,
     clockTimer: 0,
     pendingSubmit: false,
+    pendingBrowserBotPositionId: null,
     recentHighlights: [],
     playerId: ensurePlayerId(),
     settings: loadSettings(),
     activeSettingsMode: null,
-    matchmakingQueued: false,
     serverClockOffsetMs: 0,
   };
 }
 
 function saveModeSettings(state: AppState, mode: SettingsMode, result: SettingsResult): void {
-  if (mode === "local") state.settings.localClock = result.clock ?? null;
-  else if (mode === "private") state.settings.privateClock = result.clock ?? null;
-  else if (mode === "bot") {
+  if (mode === "local") {
+    state.settings.localClock = result.clock ?? null;
+  } else if (mode === "private") {
+    state.settings.privateClock = result.clock ?? null;
+  } else {
     state.settings.botClock = result.clock ?? null;
     state.settings.botName = result.botName as BotName;
     state.settings.botHumanSeat = result.botHumanSeat ?? state.settings.botHumanSeat;
-  } else state.settings.matchmakingClock = result.clock ?? null;
+  }
   saveSettings(state.settings);
 }
 
@@ -114,14 +115,6 @@ export function initApp(localBindings: LocalBindings): void {
   elements.localModeButton.addEventListener("click", () => openModeSettings("local"));
   elements.createRoomButton.addEventListener("click", () => openModeSettings("private"));
   elements.playBotButton.addEventListener("click", () => openModeSettings("bot"));
-  elements.findMatchButton.addEventListener("click", () => {
-    const action = state.matchmakingQueued
-      ? session.cancelMatchmakingFlow()
-      : Promise.resolve().then(() => openModeSettings("matchmade"));
-    action.catch((error) => {
-      session.setLobbyError(error instanceof Error ? error.message : "Could not update matchmaking.");
-    });
-  });
   elements.joinRoomButton.addEventListener("click", () => {
     session.joinRoomFlow(elements.joinCodeInput.value.trim()).catch((error) => {
       session.setLobbyError(error instanceof Error ? error.message : "Could not join room.");
@@ -183,7 +176,6 @@ export function initApp(localBindings: LocalBindings): void {
   renderer.resizeCanvas();
   session.updateHovered(window.innerWidth / 2, window.innerHeight / 2);
   session.refreshControls();
-  session.updateLobbyButtons();
   renderer.requestRender();
   session.restoreSession().catch((error) => {
     session.showLobby(

@@ -7,7 +7,7 @@ export function currentSessionLabel(session: AppState["session"]): string {
   if (!session) return "—";
   if (session.mode === "local") return "local";
   if (session.code) return formatRoomCode(session.code);
-  return session.mode === "bot" ? "bot" : session.mode === "matchmade" ? "match" : "game";
+  return session.mode === "bot" ? "bot" : "game";
 }
 
 export function currentClockTimes(state: AppState): { one: number; two: number } {
@@ -45,6 +45,10 @@ export function updateControls(state: AppState, elements: AppElements): boolean 
       : session.winner === "One" ? "red won" : "blue won";
   } else if (session.status === "waiting") {
     elements.turnPill.textContent = "waiting for opponent";
+  } else if (session.currentActor?.kind === "bot" && session.currentActor.execution === "browser" && session.yourTurn) {
+    elements.turnPill.textContent = `${session.currentActor.botName} is thinking`;
+  } else if (session.pendingRemoteMove) {
+    elements.turnPill.textContent = session.lastRemoteError ? `retrying ${session.currentActor?.botName ?? "bot"}` : `${session.currentActor?.botName ?? "bot"} is thinking`;
   } else {
     elements.turnPill.textContent = session.currentPlayer === "One" ? "red to move" : "blue to move";
   }
@@ -66,7 +70,7 @@ export function updateControls(state: AppState, elements: AppElements): boolean 
 
   const canPlay = session.mode === "local"
     ? !session.winner
-    : session.yourTurn && !session.winner && (session.seat === "one" || session.seat === "two");
+    : session.yourTurn && !session.winner && session.currentActor?.kind !== "bot" && (session.seat === "one" || session.seat === "two");
   elements.submitLabel.textContent = state.pendingSubmit ? "Playing" : "Play";
   elements.submitTurnButton.disabled = !canPlay || state.selected.length !== 2 || state.pendingSubmit;
   return timerExpired;
