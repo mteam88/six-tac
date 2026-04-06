@@ -3,8 +3,10 @@ import type {
   BotName,
   ClockSettings,
   Cube,
+  EvalComputeResult,
   HumanSeat,
   JoinSessionResponse,
+  PositionEval,
   SessionRef,
   SessionSyncResponse,
   SessionSyncUnchanged,
@@ -88,6 +90,25 @@ export async function loadSessionState(ref: SessionRef, previousSession: Session
   }
 
   return response;
+}
+
+export async function loadPositionEval(session: SessionView, botName: BotName = "kraken"): Promise<PositionEval> {
+  const result = await requestJson<EvalComputeResult>("/api/v1/compute/eval", {
+    method: "POST",
+    body: JSON.stringify({
+      position: { turnsJson: session.gameJson },
+      config: { botName },
+      cacheKey: session.positionId,
+    }),
+  });
+
+  return {
+    positionId: result.positionId,
+    score: result.score,
+    winProb: result.winProb,
+    bestMove: result.bestMove,
+    updatedAt: Date.now(),
+  };
 }
 
 export function submitSessionTurn(ref: SessionRef, stones: Cube[], basePositionId: string): Promise<SessionView> {

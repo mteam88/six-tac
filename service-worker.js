@@ -1,9 +1,10 @@
-const CACHE_NAME = "six-tac-v9";
+const CACHE_NAME = "six-tac-v10";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/styles.css",
-  "/client.js?v=2",
+  "/client.js?v=3",
+  "/browser-bots.js?v=1",
   "/service-worker.js",
   "/local-engine/engine.js",
   "/local-engine/engine_bg.wasm",

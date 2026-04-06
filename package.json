@@ -2,17 +2,19 @@
   "name": "six-tac",
   "private": true,
   "scripts": {
-    "build": "rm -rf public src/engine-wasm src/bot-wasm local-engine && npm run build:engine && npm run build:bots && npm run build:client",
-    "build:client": "tsc --noEmit && rm -rf public && mkdir -p public/local-engine && ./node_modules/.bin/esbuild client.ts --bundle --format=esm --platform=browser --target=es2022 --minify --loader:.wasm=binary --external:./local-engine/engine.js --outfile=public/client.js && cp index.html styles.css service-worker.js public/ && cp local-engine/* public/local-engine/",
+    "build": "mkdir -p public local-engine && npm run build:engine && npm run build:bots && npm run build:client",
+    "build:client": "tsc --noEmit && mkdir -p public public/local-engine && ./node_modules/.bin/esbuild client.ts --bundle --format=esm --platform=browser --target=es2022 --minify --loader:.wasm=binary --external:./local-engine/engine.js --outfile=public/client.js && ./node_modules/.bin/esbuild browser-bots.ts --bundle --format=esm --platform=browser --target=es2022 --minify --loader:.wasm=binary --outfile=public/browser-bots.js && cp index.html styles.css service-worker.js public/ && cp local-engine/* public/local-engine/",
     "build:engine": "cargo build --manifest-path engine/Cargo.toml --target wasm32-unknown-unknown --release && wasm-bindgen engine/target/wasm32-unknown-unknown/release/hex_tic_tac_engine.wasm --out-dir src/engine-wasm --out-name engine --target bundler && wasm-bindgen engine/target/wasm32-unknown-unknown/release/hex_tic_tac_engine.wasm --out-dir local-engine --out-name engine --target web",
     "build:bots": "cargo build --manifest-path bots/Cargo.toml --target wasm32-unknown-unknown --release && wasm-bindgen bots/target/wasm32-unknown-unknown/release/six_tac_bots.wasm --out-dir src/bot-wasm --out-name bots --target bundler && bash -lc 'set -euo pipefail; snippet_dir=$(find src/bot-wasm/snippets -maxdepth 1 -type d -name \"six-tac-bots-*\" | head -n 1); test -n \"${snippet_dir:-}\"; mkdir -p \"$snippet_dir/generated\"; cp bots/generated/sealbot.js \"$snippet_dir/generated/sealbot.js\"'",
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "deploy:modal": "uvx modal deploy modal/kraken_service.py",
     "export:kraken-onnx": "uv run --with torch --with onnx --with onnxscript python bots/scripts/export_kraken_onnx.py",
+    "test:e2e": "playwright test",
     "start": "npm run dev"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "esbuild": "^0.27.3",
     "typescript": "^6.0.2",
     "wrangler": "^4.80.0"

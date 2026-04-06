@@ -99,6 +99,9 @@ class KrakenWorkerProcess:
             raise RuntimeError(payload.get("error") or "Kraken worker returned no eval")
         return float(score), float(win_prob), best_move if isinstance(best_move, list) else None
 
+    def healthy(self):
+        return self._proc.poll() is None
+
     def close(self):
         if self._proc.poll() is not None:
             return
@@ -140,7 +143,10 @@ def web():
 
     @service.get("/health")
     async def health():
-        return {"ok": True}
+        ok = service.state.worker.healthy()
+        if not ok:
+            raise HTTPException(status_code=503, detail="Kraken worker is not healthy")
+        return {"ok": ok}
 
     @service.post("/v1/best-move")
     async def best_move(request: Request, _: object = Depends(require_token)):

@@ -121,7 +121,6 @@ export type SessionView = {
   clock: ClockState | null;
   serverNow: number;
   positionId: string;
-  latestEval: PositionEval | null;
   pendingRemoteMove: boolean;
   lastRemoteError: string | null;
 };
@@ -183,17 +182,11 @@ export type EvalComputeResult = {
 export type ComputeJobStatus = "queued" | "running" | "done" | "failed";
 export type ComputeJobKind = "best-move" | "eval";
 
-export type ComputeJobCallback =
-  | {
-      type: "session-remote-move";
-      sessionId: string;
-      basePositionId: string;
-    }
-  | {
-      type: "session-eval";
-      sessionId: string;
-      positionId: string;
-    };
+export type ComputeJobCallback = {
+  type: "session-remote-move";
+  sessionId: string;
+  basePositionId: string;
+};
 
 export type ComputeJobRecord = {
   id: string;

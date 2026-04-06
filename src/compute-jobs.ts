@@ -17,6 +17,10 @@ type ComputeJobMutation = {
   status: ComputeJobStatus;
 };
 
+function logComputeEvent(event: string, fields: Record<string, unknown>): void {
+  console.log(JSON.stringify({ event, ...fields }));
+}
+
 function computeJobStub(env: Env, jobId: string): DurableObjectStub {
   return env.COMPUTE_JOBS.get(env.COMPUTE_JOBS.idFromName(jobId));
 }
@@ -49,6 +53,12 @@ async function createJobRecord(
     const payload = await response.json().catch(() => ({})) as { error?: string };
     throw new Error(payload.error || "Could not initialize compute job");
   }
+  logComputeEvent("compute.job_created", {
+    jobId: job.id,
+    kind,
+    positionId: job.positionId,
+    callbackType: callback?.type ?? null,
+  });
   return job;
 }
 
@@ -84,6 +94,7 @@ export async function createBestMoveJob(
 ): Promise<ComputeJobRecord> {
   const job = await createJobRecord(env, "best-move", request, callback);
   await env.BEST_MOVE_JOBS_QUEUE.send({ jobId: job.id });
+  logComputeEvent("compute.job_enqueued", { jobId: job.id, kind: job.kind, queue: "best-move-jobs-v1" });
   return job;
 }
 
@@ -94,6 +105,7 @@ export async function createEvalJob(
 ): Promise<ComputeJobRecord> {
   const job = await createJobRecord(env, "eval", request, callback);
   await env.EVAL_JOBS_QUEUE.send({ jobId: job.id });
+  logComputeEvent("compute.job_enqueued", { jobId: job.id, kind: job.kind, queue: "eval-jobs-v1" });
   return job;
 }
 
@@ -102,34 +114,17 @@ async function applyCallback(env: Env, job: ComputeJobRecord): Promise<void> {
     return;
   }
 
-  if (job.callback.type === "session-remote-move") {
-    const result = job.result;
-    if (!("stones" in result)) {
-      return;
-    }
-    await sessionStub(env, job.callback.sessionId).fetch("https://session/internal/apply-remote-move", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        basePositionId: job.callback.basePositionId,
-        stones: result.stones,
-      }),
-    });
+  const result = job.result;
+  if (!("stones" in result)) {
     return;
   }
 
-  const result = job.result;
-  if (!("score" in result)) {
-    return;
-  }
-  await sessionStub(env, job.callback.sessionId).fetch("https://session/internal/apply-eval", {
+  await sessionStub(env, job.callback.sessionId).fetch("https://session/internal/apply-remote-move", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      positionId: job.callback.positionId,
-      score: result.score,
-      winProb: result.winProb,
-      bestMove: result.bestMove,
+      basePositionId: job.callback.basePositionId,
+      stones: result.stones,
     }),
   });
 }
@@ -137,25 +132,30 @@ async function applyCallback(env: Env, job: ComputeJobRecord): Promise<void> {
 async function processComputeJob(message: Message<ComputeJobEnvelope>, env: Env, expectedKind: ComputeJobRecord["kind"]): Promise<void> {
   const job = await getComputeJob(env, message.body.jobId);
   if (!job || job.kind !== expectedKind) {
+    logComputeEvent("compute.job_dropped", { jobId: message.body.jobId, reason: "missing_or_kind_mismatch", expectedKind });
     message.ack();
     return;
   }
   if (job.status === "done") {
+    logComputeEvent("compute.job_dropped", { jobId: job.id, reason: "already_done", kind: job.kind });
     message.ack();
     return;
   }
 
   try {
+    logComputeEvent("compute.job_running", { jobId: job.id, kind: job.kind, positionId: job.positionId });
     await setJobState(env, job.id, { status: "running", error: null });
     const result = job.kind === "best-move"
       ? await chooseRemoteBestMove(env, job.request as BestMoveComputeRequest)
       : await evaluateRemotePosition(env, job.request as EvalComputeRequest);
     const completed = await setJobState(env, job.id, { status: "done", result, error: null });
     await applyCallback(env, completed);
+    logComputeEvent("compute.job_done", { jobId: job.id, kind: job.kind, positionId: job.positionId });
     message.ack();
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);
     console.error("compute job failed", { jobId: job.id, kind: job.kind, error: messageText });
+    logComputeEvent("compute.job_failed", { jobId: job.id, kind: job.kind, positionId: job.positionId, error: messageText });
     await setJobState(env, job.id, { status: "failed", error: messageText }).catch((updateError) => {
       console.error("could not persist compute job failure", updateError);
     });

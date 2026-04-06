@@ -11,6 +11,9 @@ export type AppElements = {
   roomCodePill: HTMLSpanElement;
   copyRoomButton: HTMLButtonElement;
   turnPill: HTMLSpanElement;
+  evalPanel: HTMLDivElement;
+  evalFill: HTMLDivElement;
+  evalLabel: HTMLSpanElement;
   clockPanel: HTMLDivElement;
   clockOneCard: HTMLDivElement;
   clockTwoCard: HTMLDivElement;
@@ -60,6 +63,9 @@ export function getAppElements(): AppElements {
     roomCodePill: requiredElement("room-code-pill"),
     copyRoomButton: requiredElement("copy-room-button"),
     turnPill: requiredElement("turn-pill"),
+    evalPanel: requiredElement("eval-panel"),
+    evalFill: requiredElement("eval-fill"),
+    evalLabel: requiredElement("eval-label"),
     clockPanel: requiredElement("clock-panel"),
     clockOneCard: requiredElement("clock-one"),
     clockTwoCard: requiredElement("clock-two"),

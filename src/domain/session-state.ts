@@ -6,7 +6,6 @@ import type {
   HumanSeat,
   Participant,
   Player,
-  PositionEval,
   Seat,
   SessionData,
   SessionMode,
@@ -159,7 +158,6 @@ export function buildSessionView(
   options: {
     token: string | null;
     positionId: string;
-    latestEval: PositionEval | null;
     pendingRemoteMove: boolean;
     lastRemoteError: string | null;
     now?: number;
@@ -189,7 +187,6 @@ export function buildSessionView(
     clock: session.clock ? cloneClock(session.clock) : null,
     serverNow: now,
     positionId: options.positionId,
-    latestEval: options.latestEval,
     pendingRemoteMove: options.pendingRemoteMove,
     lastRemoteError: options.lastRemoteError,
   };
@@ -216,7 +213,6 @@ export function buildLocalSessionView(snapshot: EngineSnapshot, now = Date.now()
     clock: null,
     serverNow: now,
     positionId: String(now),
-    latestEval: null,
     pendingRemoteMove: false,
     lastRemoteError: null,
   };

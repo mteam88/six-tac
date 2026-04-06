@@ -26,6 +26,38 @@ export function currentClockTimes(state: AppState): { one: number; two: number }
   };
 }
 
+function redWinProbability(state: AppState): number | null {
+  const session = state.session;
+  const evalData = state.positionEval;
+  if (!session || !evalData || evalData.positionId !== session.positionId) {
+    return null;
+  }
+
+  const raw = session.currentPlayer === "One"
+    ? evalData.winProb
+    : 1 - evalData.winProb;
+  return Math.max(0, Math.min(1, raw));
+}
+
+function updateEvalPanel(state: AppState, elements: AppElements): void {
+  const session = state.session;
+  if (!session || session.mode === "local") {
+    elements.evalPanel.classList.add("hidden");
+    return;
+  }
+
+  const redProb = redWinProbability(state);
+  if (redProb === null) {
+    elements.evalPanel.classList.add("hidden");
+    return;
+  }
+
+  const percent = Math.round(redProb * 100);
+  elements.evalPanel.classList.remove("hidden");
+  elements.evalFill.style.background = `linear-gradient(90deg, rgba(239, 68, 68, 0.9) 0%, rgba(239, 68, 68, 0.9) ${percent}%, rgba(59, 130, 246, 0.9) ${percent}%, rgba(59, 130, 246, 0.9) 100%)`;
+  elements.evalLabel.textContent = `Red ${percent}%`;
+}
+
 export function updateControls(state: AppState, elements: AppElements): boolean {
   const session = state.session;
   if (!session) {
@@ -52,6 +84,8 @@ export function updateControls(state: AppState, elements: AppElements): boolean 
   } else {
     elements.turnPill.textContent = session.currentPlayer === "One" ? "red to move" : "blue to move";
   }
+
+  updateEvalPanel(state, elements);
 
   if (session.clock?.enabled) {
     const times = currentClockTimes(state);

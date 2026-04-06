@@ -78,7 +78,6 @@ export function buildLocalSession(snapshot: EngineSnapshot, clock: ClockState | 
     serverNow: now,
     positionId: String(now),
     currentActor: null,
-    latestEval: null,
     pendingRemoteMove: false,
     lastRemoteError: null,
   };

@@ -1,6 +1,6 @@
 import type { LobbySettings } from "./persistence.js";
 import type { CameraState } from "./render.js";
-import type { Cube, SessionRef, SessionView } from "../domain/types.js";
+import type { Cube, PositionEval, SessionRef, SessionView } from "../domain/types.js";
 
 export type Player = "One" | "Two";
 
@@ -41,6 +41,9 @@ export type AppState = {
   clockTimer: number;
   pendingSubmit: boolean;
   pendingBrowserBotPositionId: string | null;
+  positionEval: PositionEval | null;
+  pendingEvalPositionId: string | null;
+  evalRequestSerial: number;
   recentHighlights: Cube[];
   playerId: string;
   settings: LobbySettings;

@@ -1,4 +1,4 @@
-import { createBotSession, createPrivateSession, joinPrivateSession, loadSessionState, submitSessionTurn } from "./api.js";
+import { createBotSession, createPrivateSession, joinPrivateSession, loadPositionEval, loadSessionState, submitSessionTurn } from "./api.js";
 import type { AppState, LocalBindings, SettingsMode } from "./app-types.js";
 import type { AppElements } from "./dom.js";
 import { sameCube, cubeDistance, currentControllingPlayer, loadRoomCodeFromUrl } from "./helpers.js";
@@ -13,8 +13,14 @@ import { loadLocalGame, loadSession, POLL_INTERVAL_MS, saveLocalGame, saveSessio
 import type { BoardRenderer } from "./render.js";
 import { updateControls } from "./session-ui.js";
 import { ROOM_QUERY_PARAM } from "../domain/types.js";
-import type { Cube, SessionRef, SessionView } from "../domain/types.js";
-import { chooseBotMove as chooseBrowserBotMove } from "../bots.js";
+import type { BotName, Cube, SessionRef, SessionView } from "../domain/types.js";
+
+const BROWSER_BOTS_MODULE_PATH = "./browser-bots.js?v=1";
+
+async function chooseBrowserBotMove(botName: BotName, gameJson: string): Promise<[Cube, Cube]> {
+  const module = await import(BROWSER_BOTS_MODULE_PATH) as { chooseBotMove: (name: BotName, game: string) => [Cube, Cube] };
+  return module.chooseBotMove(botName, gameJson);
+}
 
 export function createSessionController(options: {
   state: AppState;
@@ -66,6 +72,55 @@ export function createSessionController(options: {
   };
   const shouldPauseNetworkSync = (): boolean => document.visibilityState !== "visible" || !navigator.onLine;
 
+  const clearPositionEval = (): void => {
+    state.evalRequestSerial += 1;
+    state.positionEval = null;
+    state.pendingEvalPositionId = null;
+  };
+
+  const shouldRequestPositionEval = (session: SessionView): boolean => (
+    session.mode !== "local"
+    && session.status === "active"
+    && !session.winner
+  );
+
+  const maybeRequestPositionEval = (session: SessionView): void => {
+    if (!shouldRequestPositionEval(session)) {
+      if (state.positionEval || state.pendingEvalPositionId) {
+        clearPositionEval();
+      }
+      return;
+    }
+
+    if (state.positionEval?.positionId === session.positionId || state.pendingEvalPositionId === session.positionId) {
+      return;
+    }
+
+    const requestSerial = state.evalRequestSerial + 1;
+    state.evalRequestSerial = requestSerial;
+    state.pendingEvalPositionId = session.positionId;
+
+    void loadPositionEval(session)
+      .then((positionEval) => {
+        const activeSession = state.session;
+        if (!activeSession || state.evalRequestSerial !== requestSerial || activeSession.positionId !== positionEval.positionId) {
+          return;
+        }
+        state.positionEval = positionEval;
+        state.pendingEvalPositionId = null;
+        refreshControls();
+        renderer.requestRender();
+      })
+      .catch(() => {
+        if (state.evalRequestSerial !== requestSerial) {
+          return;
+        }
+        state.pendingEvalPositionId = null;
+        refreshControls();
+        renderer.requestRender();
+      });
+  };
+
   const maybeRunBrowserBotTurn = (session: SessionView): void => {
     if (
       session.mode === "local"
@@ -112,6 +167,7 @@ export function createSessionController(options: {
     state.selected = [];
     state.recentHighlights = [];
     state.pendingBrowserBotPositionId = null;
+    clearPositionEval();
     elements.copyRoomButton.dataset.player = "";
     elements.lobby.classList.remove("hidden");
     elements.bottomBar.classList.add("hidden");
@@ -124,6 +180,7 @@ export function createSessionController(options: {
 
   const applySession = (session: SessionView): void => {
     const previousTurns = state.session?.turns ?? 0;
+    const previousPositionId = state.session?.positionId ?? null;
     const controllingPlayer = currentControllingPlayer(session);
     const highlight = session.mode === "local"
       ? session.lastTurnStones.length > 0
@@ -134,7 +191,14 @@ export function createSessionController(options: {
     state.pendingBrowserBotPositionId = state.pendingBrowserBotPositionId === session.positionId
       ? state.pendingBrowserBotPositionId
       : null;
-    if (session.mode === "local") persistLocalSession(session);
+    if (session.mode === "local") {
+      persistLocalSession(session);
+      clearPositionEval();
+    } else if (previousPositionId !== session.positionId) {
+      state.evalRequestSerial += 1;
+      state.positionEval = null;
+      state.pendingEvalPositionId = null;
+    }
 
     elements.lobby.classList.add("hidden");
     elements.bottomBar.classList.remove("hidden");
@@ -151,6 +215,7 @@ export function createSessionController(options: {
     startClockTicker();
     refreshControls();
     renderer.requestRender();
+    maybeRequestPositionEval(session);
     maybeRunBrowserBotTurn(session);
   };
 

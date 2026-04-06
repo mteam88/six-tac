@@ -9,5 +9,5 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "public"
   },
-  "include": ["client.ts"]
+  "include": ["client.ts", "browser-bots.ts", "src/bot-wasm.d.ts"]
 }
