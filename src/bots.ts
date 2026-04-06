@@ -4,7 +4,7 @@ import * as bindings from "./bot-wasm/bots_bg.js";
 import wasmModule from "./bot-wasm/bots_bg.wasm";
 import type { BotName, Cube } from "./domain/types";
 
-const instance = new WebAssembly.Instance(wasmModule, {
+const { instance } = await WebAssembly.instantiate(wasmModule as unknown as BufferSource, {
   "./bots_bg.js": bindings,
 });
 
